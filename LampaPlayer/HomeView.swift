@@ -8,6 +8,12 @@ struct HomeView: View {
     @AppStorage(AppSettings.hwdecKey) private var hwdec = true
     @AppStorage(AppSettings.languageKey) private var language = ""
     @State private var confirmClear = false
+    @ObservedObject private var torr = TorrServerManager.shared
+    @AppStorage(AppSettings.torrServerEnabledKey) private var torrEnabled = false
+    @AppStorage(AppSettings.torrServerKeepAliveKey) private var torrKeepAlive = true
+    @AppStorage(AppSettings.videoOutputKey) private var videoOutput = VideoOutput.avfoundation.rawValue
+    @AppStorage(AppSettings.hdrKey) private var hdr = true
+    @AppStorage(AppSettings.autoPiPKey) private var autoPiP = true
 
     private struct LanguageOption: Identifiable {
         let id: String
@@ -62,6 +68,68 @@ struct HomeView: View {
                 }
 
                 Section {
+                    Toggle("Встроенный TorrServer", isOn: Binding(
+                        get: { torrEnabled },
+                        set: { value in
+                            torrEnabled = value
+                            torr.setEnabled(value)
+                        }
+                    ))
+                    .disabled(torr.busy)
+                    HStack {
+                        Text("Состояние")
+                        Spacer()
+                        if torr.busy {
+                            ProgressView()
+                        } else {
+                            Text(torr.running ? "работает" : "остановлен")
+                                .foregroundColor(torr.running ? .green : .secondary)
+                        }
+                    }
+                    if let error = torr.lastError {
+                        Text(error).font(.footnote).foregroundColor(.red)
+                    }
+                    if torrEnabled {
+                        HStack {
+                            Text("Адрес для Lampa")
+                            Spacer()
+                            Text(TorrServerManager.address)
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Button {
+                            UIPasteboard.general.string = TorrServerManager.address
+                        } label: {
+                            Label("Скопировать адрес", systemImage: "doc.on.doc")
+                        }
+                        Toggle("Работать в фоне", isOn: $torrKeepAlive)
+                        Button {
+                            if let url = URL(string: TorrServerManager.address) { UIApplication.shared.open(url) }
+                        } label: {
+                            Label("Открыть веб-интерфейс TorrServer", systemImage: "safari")
+                        }
+                        .disabled(!torr.running)
+                    }
+                } header: {
+                    Text("TorrServer")
+                } footer: {
+                    Text("Торренты качаются прямо на телефоне, без отдельного сервера. В Lampa: Настройки → TorrServer → адрес \(TorrServerManager.address). «Работать в фоне» не даёт iOS заморозить сервер, пока Lampa открыта в Safari: приложение проигрывает тишину, это тратит немного батареи.")
+                }
+
+                Section {
+                    Picker("Видеовывод", selection: $videoOutput) {
+                        Text("AVFoundation — PiP и HDR").tag(VideoOutput.avfoundation.rawValue)
+                        Text("libplacebo — без PiP").tag(VideoOutput.gpuNext.rawValue)
+                    }
+                    Toggle("HDR", isOn: $hdr)
+                    Toggle("Картинка в картинке при сворачивании", isOn: $autoPiP)
+                } header: {
+                    Text("Видео")
+                } footer: {
+                    Text("AVFoundation умеет картинку в картинке и настоящий HDR (iOS 17+). libplacebo точнее показывает цвета Dolby Vision profile 5 (часто в WEB-DL): если такое видео фиолетово-зелёное, переключитесь на него. Настройки применяются к следующему открытому видео.")
+                }
+
+                Section {
                     Picker("Язык озвучки и субтитров", selection: $language) {
                         ForEach(languages) { item in
                             Text(item.title).tag(item.id)
@@ -82,7 +150,7 @@ struct HomeView: View {
                         Text("1. В Lampa: Настройки → Плеер → тип плеера **Infuse** (и для торрентов тоже). Так приходят плейлист серий, позиция и субтитры.")
                         Text("2. Вариант попроще — **SenPlayer**: придёт только одна ссылка.")
                         Text("3. Настоящие Infuse и SenPlayer на телефоне держать не надо, иначе iOS может открыть их вместо этого плеера.")
-                        Text("4. Для торрентов в Lampa должен быть указан ваш TorrServer, и телефон должен до него доставать.")
+                        Text("4. Для торрентов в Lampa укажите TorrServer: встроенный (раздел выше) или свой на компьютере/VPS.")
                     }
                     .font(.footnote)
                     .foregroundColor(.secondary)

@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        TorrServerManager.shared.startIfEnabled()
         return true
     }
 
@@ -71,28 +72,45 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 enum Orientation {
+    private static var scene: UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+    }
+
+    /// Разрешённые ориентации без принудительного поворота (крутится вместе с телефоном).
     static func lock(_ mask: UIInterfaceOrientationMask) {
         AppDelegate.orientationMask = mask
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) ??
-            UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
-        else { return }
-
+        guard let scene else { return }
         if #available(iOS 16.0, *) {
-            var controller = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController
-            while let current = controller {
-                current.setNeedsUpdateOfSupportedInterfaceOrientations()
-                controller = current.presentedViewController
-            }
-            if mask != .all {
-                scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
-            }
-        } else if mask == .landscape {
-            UIDevice.current.setValue(UIInterfaceOrientation.landscapeRight.rawValue, forKey: "orientation")
-            UIViewController.attemptRotationToDeviceOrientation()
+            refreshControllers(in: scene)
         } else {
             UIViewController.attemptRotationToDeviceOrientation()
+        }
+    }
+
+    /// Кнопка «повернуть»: работает и при включённой блокировке поворота.
+    /// После неё экран держит выбранную ориентацию, пока плеер открыт.
+    static func toggle() {
+        guard let scene else { return }
+        let toPortrait = scene.interfaceOrientation.isLandscape
+        let mask: UIInterfaceOrientationMask = toPortrait ? .portrait : .landscape
+        AppDelegate.orientationMask = mask
+        if #available(iOS 16.0, *) {
+            refreshControllers(in: scene)
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+        } else {
+            let target: UIInterfaceOrientation = toPortrait ? .portrait : .landscapeRight
+            UIDevice.current.setValue(target.rawValue, forKey: "orientation")
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
+    }
+
+    @available(iOS 16.0, *)
+    private static func refreshControllers(in scene: UIWindowScene) {
+        var controller = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController
+        while let current = controller {
+            current.setNeedsUpdateOfSupportedInterfaceOrientations()
+            controller = current.presentedViewController
         }
     }
 }

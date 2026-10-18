@@ -167,7 +167,38 @@ enum AppSettings {
     static let hwdecKey = "hwdec"
     static let languageKey = "preferredLanguage"
 
+    static let videoOutputKey = "videoOutput"
+    static let hdrKey = "hdr"
+    static let autoPiPKey = "autoPiP"
+    static let subScaleKey = "subScale"
+    static let torrServerEnabledKey = "torrServerEnabled"
+    static let torrServerKeepAliveKey = "torrServerKeepAlive"
+
     static var hwdec: Bool {
         UserDefaults.standard.object(forKey: hwdecKey) as? Bool ?? true
+    }
+
+    static var hdr: Bool {
+        UserDefaults.standard.object(forKey: hdrKey) as? Bool ?? true
+    }
+
+    static var autoPiP: Bool {
+        UserDefaults.standard.object(forKey: autoPiPKey) as? Bool ?? true
+    }
+
+    static var subScale: Double {
+        get {
+            let value = UserDefaults.standard.double(forKey: subScaleKey)
+            return value > 0 ? value : 1
+        }
+        set { UserDefaults.standard.set(newValue, forKey: subScaleKey) }
+    }
+
+    static var torrServerEnabled: Bool {
+        UserDefaults.standard.bool(forKey: torrServerEnabledKey)
+    }
+
+    static var torrServerKeepAlive: Bool {
+        UserDefaults.standard.object(forKey: torrServerKeepAliveKey) as? Bool ?? true
     }
 }

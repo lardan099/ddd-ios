@@ -74,19 +74,36 @@ private enum Adjustment: Equatable {
     case volume(Double)
 }
 
+/// Что делает текущий свайп: решается по первым пикселям движения.
+private enum DragMode {
+    case brightness(Double)
+    case volume(Double)
+    case seek(Double)
+}
+
 struct PlayerView: View {
     @StateObject private var model: PlayerModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var sheet: PlayerSheet?
     @State private var showLog = false
     @State private var adjustment: Adjustment?
-    @State private var adjustStart: Double?
+    @State private var dragMode: DragMode?
+    @State private var seekPreview: (target: Double, delta: Double)?
     @State private var adjustHideToken = 0
     @State private var originalBrightness: CGFloat?
+    @State private var locked = false
+    @State private var showUnlock = false
+    @State private var unlockHideToken = 0
+
+    /// Сколько секунд перемотки даёт свайп на всю ширину экрана.
+    private let seekSpan: Double = 120
 
     init(request: PlaybackRequest) {
         _model = StateObject(wrappedValue: PlayerModel(request: request))
     }
+
+    private var isPortrait: Bool { verticalSizeClass == .regular }
 
     var body: some View {
         ZStack {
@@ -106,13 +123,18 @@ struct PlayerView: View {
                     .allowsHitTesting(false)
             }
 
-            if model.controlsVisible || model.errorMessage != nil {
+            if !locked && (model.controlsVisible || model.errorMessage != nil) {
                 controls
                     .transition(.opacity)
             }
 
             if let adjustment {
                 adjustmentIndicator(adjustment)
+                    .allowsHitTesting(false)
+            }
+
+            if let seekPreview {
+                seekPreviewView(seekPreview)
                     .allowsHitTesting(false)
             }
 
@@ -128,7 +150,7 @@ struct PlayerView: View {
                     .allowsHitTesting(false)
             }
 
-            if let offer = model.resumeOffer, !model.loading, model.errorMessage == nil {
+            if let offer = model.resumeOffer, !model.loading, model.errorMessage == nil, !locked {
                 VStack {
                     Spacer()
                     HStack {
@@ -136,7 +158,11 @@ struct PlayerView: View {
                         Spacer()
                     }
                 }
-                .padding(.leading, 24).padding(.bottom, 100)
+                .padding(.leading, 24).padding(.bottom, 130)
+            }
+
+            if locked && showUnlock {
+                unlockButton
             }
 
             if let error = model.errorMessage {
@@ -144,13 +170,15 @@ struct PlayerView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: model.controlsVisible)
+        .animation(.easeInOut(duration: 0.2), value: showUnlock)
         .statusBar(hidden: true)
         .modifier(HideSystemOverlays())
         .preferredColorScheme(.dark)
         .onAppear {
-            Orientation.lock(.landscape)
+            Orientation.lock(.allButUpsideDown)
             UIApplication.shared.isIdleTimerDisabled = true
             originalBrightness = UIScreen.main.brightness
+            TorrServerManager.shared.playerActive = true
             AudioSession.activate()
             model.start()
         }
@@ -158,6 +186,7 @@ struct PlayerView: View {
             model.shutdown()
             UIApplication.shared.isIdleTimerDisabled = false
             if let originalBrightness { UIScreen.main.brightness = originalBrightness }
+            TorrServerManager.shared.playerActive = false
             AudioSession.deactivate()
             Orientation.lock(.all)
             openSuccessCallback()
@@ -170,6 +199,8 @@ struct PlayerView: View {
             case .playlist: PlaylistSheet(model: model)
             case .audio: TrackSheet(model: model, kind: .audio)
             case .subtitles: TrackSheet(model: model, kind: .subtitles)
+            case .tuning: TuningSheet(model: model)
+            case .tech: TechSheet(model: model)
             }
         }
     }
@@ -177,55 +208,113 @@ struct PlayerView: View {
     // MARK: - Жесты
 
     /// Левая половина: двойной тап −10 с, свайп вверх/вниз — яркость.
-    /// Правая половина: двойной тап +10 с, свайп вверх/вниз — громкость. Щипок — вписать/заполнить.
+    /// Правая половина: двойной тап +10 с, свайп вверх/вниз — громкость.
+    /// Свайп влево/вправо в любом месте — перемотка с превью. Щипок — вписать/заполнить.
     private var gestureLayer: some View {
         GeometryReader { geo in
             HStack(spacing: 0) {
-                sideZone(left: true, height: geo.size.height)
-                sideZone(left: false, height: geo.size.height)
+                sideZone(left: true, size: geo.size)
+                sideZone(left: false, size: geo.size)
             }
         }
         .ignoresSafeArea()
         .gesture(
             MagnificationGesture().onEnded { scale in
+                guard !locked else { return }
                 if scale > 1.1 { model.setFill(true) } else if scale < 0.9 { model.setFill(false) }
             }
         )
     }
 
-    private func sideZone(left: Bool, height: CGFloat) -> some View {
+    private func sideZone(left: Bool, size: CGSize) -> some View {
         Color.clear
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) { model.seek(by: left ? -10 : 10) }
-            .onTapGesture { model.toggleControls() }
+            .onTapGesture(count: 2) {
+                guard !locked else { return }
+                model.seek(by: left ? -10 : 10)
+            }
+            .onTapGesture {
+                if locked { flashUnlock() } else { model.toggleControls() }
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
-                    .onChanged { drag in
-                        if adjustStart == nil {
-                            // Только явно вертикальный свайп, горизонтальный не трогаем.
-                            guard abs(drag.translation.height) > abs(drag.translation.width) * 1.5 else { return }
-                            adjustStart = left ? Double(UIScreen.main.brightness) : SystemVolume.shared.current
-                        }
-                        guard let start = adjustStart else { return }
-                        let delta = -Double(drag.translation.height) / Double(max(height * 0.6, 1))
-                        let value = min(max(start + delta, 0), 1)
-                        if left {
-                            UIScreen.main.brightness = CGFloat(value)
-                            adjustment = .brightness(value)
-                        } else {
-                            SystemVolume.shared.set(value)
-                            adjustment = .volume(value)
-                        }
-                    }
-                    .onEnded { _ in
-                        adjustStart = nil
-                        adjustHideToken += 1
-                        let token = adjustHideToken
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            if token == adjustHideToken { withAnimation { adjustment = nil } }
-                        }
-                    }
+                    .onChanged { drag in dragChanged(drag, left: left, size: size) }
+                    .onEnded { _ in dragEnded() }
             )
+    }
+
+    private func dragChanged(_ drag: DragGesture.Value, left: Bool, size: CGSize) {
+        guard !locked else { return }
+        if dragMode == nil {
+            let dx = abs(drag.translation.width), dy = abs(drag.translation.height)
+            if dy > dx * 1.5 {
+                dragMode = left ? .brightness(Double(UIScreen.main.brightness)) : .volume(SystemVolume.shared.current)
+            } else if dx > dy * 1.5, model.clock.duration > 0 {
+                dragMode = .seek(model.clock.position)
+            } else {
+                return
+            }
+        }
+        switch dragMode {
+        case .brightness(let start):
+            let value = min(max(start - Double(drag.translation.height) / Double(max(size.height * 0.6, 1)), 0), 1)
+            UIScreen.main.brightness = CGFloat(value)
+            adjustment = .brightness(value)
+        case .volume(let start):
+            let value = min(max(start - Double(drag.translation.height) / Double(max(size.height * 0.6, 1)), 0), 1)
+            SystemVolume.shared.set(value)
+            adjustment = .volume(value)
+        case .seek(let start):
+            let duration = model.clock.duration
+            let target = min(max(start + Double(drag.translation.width) / Double(max(size.width, 1)) * seekSpan, 0), duration)
+            model.clock.scrubTime = target
+            seekPreview = (target, target - start)
+        case .none:
+            break
+        }
+    }
+
+    private func dragEnded() {
+        if case .seek = dragMode, let target = model.clock.scrubTime {
+            model.clock.scrubTime = nil
+            model.seek(to: target)
+            seekPreview = nil
+        }
+        dragMode = nil
+        adjustHideToken += 1
+        let token = adjustHideToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            if token == adjustHideToken { withAnimation { adjustment = nil } }
+        }
+    }
+
+    private func flashUnlock() {
+        showUnlock = true
+        unlockHideToken += 1
+        let token = unlockHideToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if token == unlockHideToken { showUnlock = false }
+        }
+    }
+
+    private var unlockButton: some View {
+        VStack(spacing: 8) {
+            Button {
+                locked = false
+                showUnlock = false
+                model.poke()
+            } label: {
+                Image(systemName: "lock.open.fill")
+                    .font(.system(size: 26, weight: .semibold))
+                    .frame(width: 64, height: 64)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            Text("Разблокировать")
+                .font(.caption)
+        }
+        .foregroundColor(.white)
     }
 
     private func adjustmentIndicator(_ adjustment: Adjustment) -> some View {
@@ -253,7 +342,22 @@ struct PlayerView: View {
         .background(Color.black.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
-        .padding(.horizontal, 60)
+        .padding(.horizontal, isPortrait ? 24 : 60)
+    }
+
+    private func seekPreviewView(_ preview: (target: Double, delta: Double)) -> some View {
+        let sign = preview.delta >= 0 ? "+" : "−"
+        return VStack(spacing: 4) {
+            Text(PlayerModel.formatTime(preview.target))
+                .font(.system(size: 34, weight: .semibold).monospacedDigit())
+            Text(sign + PlayerModel.formatTime(abs(preview.delta)))
+                .font(.headline.monospacedDigit())
+                .foregroundColor(.white.opacity(0.75))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 22).padding(.vertical, 14)
+        .background(Color.black.opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     // MARK: - Элементы управления
@@ -270,22 +374,23 @@ struct PlayerView: View {
                 Spacer(minLength: 0)
                 centerButtons
                 Spacer(minLength: 0)
+                actionRow
                 BottomBar(clock: model.clock) { model.seek(to: $0) }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 20)
+            .padding(.top, isPortrait ? 8 : 20)
             .padding(.bottom, 12)
         }
         .foregroundColor(.white)
     }
 
     private var topBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             IconButton(systemName: "xmark") { dismiss() }
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.current.displayTitle)
                     .font(.headline)
-                    .lineLimit(1)
+                    .lineLimit(isPortrait ? 2 : 1)
                 if model.items.count > 1 {
                     Text("\(model.index + 1) из \(model.items.count)")
                         .font(.caption)
@@ -295,6 +400,22 @@ struct PlayerView: View {
             .padding(.leading, 4)
             .allowsHitTesting(false)
             Spacer(minLength: 8)
+            if model.pipAvailable {
+                IconButton(systemName: model.pipActive ? "pip.exit" : "pip.enter") { model.togglePiP() }
+            }
+            IconButton(systemName: "rotate.right") { Orientation.toggle() }
+            IconButton(systemName: "lock") {
+                locked = true
+                model.controlsVisible = false
+                flashUnlock()
+            }
+        }
+    }
+
+    /// Озвучка, субтитры, серии и меню — над полосой перемотки, чтобы влезало и вертикально.
+    private var actionRow: some View {
+        HStack(spacing: 4) {
+            Spacer(minLength: 0)
             IconButton(systemName: "waveform") { sheet = .audio }
             IconButton(systemName: model.subTracks.contains(where: { $0.selected }) ? "captions.bubble.fill" : "captions.bubble") {
                 sheet = .subtitles
@@ -323,6 +444,12 @@ struct PlayerView: View {
                 Label(model.fill ? "Вписать в экран" : "Заполнить экран",
                       systemImage: model.fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
             }
+            Button { sheet = .tuning } label: {
+                Label("Задержка и размер субтитров", systemImage: "slider.horizontal.3")
+            }
+            Button { sheet = .tech } label: {
+                Label("Тех. данные и лог", systemImage: "info.circle")
+            }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: 22, weight: .semibold))
@@ -332,18 +459,19 @@ struct PlayerView: View {
     }
 
     private var centerButtons: some View {
-        HStack(spacing: 28) {
+        let small: CGFloat = isPortrait ? 50 : 60
+        return HStack(spacing: isPortrait ? 8 : 28) {
             if model.items.count > 1 {
-                IconButton(systemName: "backward.end.fill", size: 26, box: 60) { model.previous() }
+                IconButton(systemName: "backward.end.fill", size: 24, box: small) { model.previous() }
                     .disabled(!model.hasPrevious)
                     .opacity(model.hasPrevious ? 1 : 0.35)
             }
-            IconButton(systemName: "gobackward.10", size: 30, box: 60) { model.seek(by: -10) }
-            IconButton(systemName: model.paused ? "play.fill" : "pause.fill", size: 44, box: 76) { model.togglePause() }
+            IconButton(systemName: "gobackward.10", size: 28, box: small) { model.seek(by: -10) }
+            IconButton(systemName: model.paused ? "play.fill" : "pause.fill", size: 42, box: isPortrait ? 66 : 76) { model.togglePause() }
                 .opacity(model.loading ? 0 : 1)
-            IconButton(systemName: "goforward.10", size: 30, box: 60) { model.seek(by: 10) }
+            IconButton(systemName: "goforward.10", size: 28, box: small) { model.seek(by: 10) }
             if model.items.count > 1 {
-                IconButton(systemName: "forward.end.fill", size: 26, box: 60) { model.next() }
+                IconButton(systemName: "forward.end.fill", size: 24, box: small) { model.next() }
                     .disabled(!model.hasNext)
                     .opacity(model.hasNext ? 1 : 0.35)
             }
@@ -410,6 +538,8 @@ struct PlayerView: View {
                 Button("Повторить") { model.retry() }
                     .buttonStyle(.borderedProminent)
                 Button(showLog ? "Скрыть лог" : "Лог") { showLog.toggle() }
+                    .buttonStyle(.bordered)
+                Button("Тех. данные") { sheet = .tech }
                     .buttonStyle(.bordered)
                 Button("Закрыть") { dismiss() }
                     .buttonStyle(.bordered)
@@ -498,7 +628,7 @@ struct Scrubber: View {
 }
 
 enum PlayerSheet: String, Identifiable {
-    case audio, subtitles, playlist
+    case audio, subtitles, playlist, tuning, tech
     var id: String { rawValue }
 }
 
