@@ -39,14 +39,20 @@ final class MPVVideoView: UIView {
     }
 }
 
+/// Часто меняющееся время воспроизведения живёт отдельно: иначе весь экран с кнопками
+/// перерисовывается дважды в секунду, и нажатия теряются.
+final class PlaybackClock: ObservableObject {
+    @Published var position: Double = 0
+    @Published var duration: Double = 0
+    @Published var cacheEnd: Double = 0
+    @Published var scrubTime: Double?
+}
+
 /// Обёртка над libmpv + состояние для SwiftUI.
 /// Все @Published меняются только в главном потоке; события mpv читаются на своей очереди.
 final class PlayerModel: ObservableObject {
     @Published private(set) var items: [PlayItem]
     @Published private(set) var index: Int
-    @Published var position: Double = 0
-    @Published private(set) var duration: Double = 0
-    @Published private(set) var cacheEnd: Double = 0
     @Published private(set) var paused = false
     @Published private(set) var loading = true
     @Published private(set) var buffering = false
@@ -58,12 +64,26 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var fill = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var finished = false
-    @Published var scrubTime: Double?
     @Published var controlsVisible = true
     @Published private(set) var toast: String?
     @Published private(set) var resumeOffer: Double?
 
     let videoView = MPVVideoView()
+    let clock = PlaybackClock()
+
+    var position: Double {
+        get { clock.position }
+        set { if clock.position != newValue { clock.position = newValue } }
+    }
+    private(set) var duration: Double {
+        get { clock.duration }
+        set { if clock.duration != newValue { clock.duration = newValue } }
+    }
+    private var cacheEnd: Double {
+        get { clock.cacheEnd }
+        set { if abs(clock.cacheEnd - newValue) > 0.5 || newValue == 0 { clock.cacheEnd = newValue } }
+    }
+    var scrubTime: Double? { clock.scrubTime }
     let successURL: String?
     private(set) var log: [String] = []
 
@@ -433,7 +453,8 @@ final class PlayerModel: ObservableObject {
         speedText = nil
         setString("start", "none")
         if let sub = current.sub {
-            command(["sub-add", sub, "auto"])
+            // Без заголовка mpv называет дорожку длинным URL.
+            command(["sub-add", sub, "auto", "Из Lampa"])
         }
         if let d = getDouble("duration"), d > 0 { duration = d }
         refreshTracks()

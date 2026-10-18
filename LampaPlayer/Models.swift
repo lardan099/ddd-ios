@@ -62,20 +62,34 @@ struct MediaTrack: Identifiable, Hashable {
     let forced: Bool
     let selected: Bool
 
+    /// Заголовок без мусора: mpv подставляет в title имя файла или URL внешних субтитров.
+    private var cleanTitle: String? {
+        guard var text = title?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        let lower = text.lowercased()
+        if lower.contains("://") || lower.hasPrefix("/") || lower.contains("%2f") || lower.contains("?") {
+            return nil
+        }
+        let ext = (text as NSString).pathExtension.lowercased()
+        if ["srt", "ass", "ssa", "vtt", "sub", "sup", "idx", "mka", "ac3", "dts", "aac"].contains(ext) {
+            text = (text as NSString).deletingPathExtension
+        }
+        return text.isEmpty ? nil : text
+    }
+
     var label: String {
         var parts: [String] = []
-        if let title, !title.isEmpty { parts.append(title) }
+        if let cleanTitle { parts.append(cleanTitle) }
         if let lang, let name = Self.languageName(lang),
-           !(title?.localizedCaseInsensitiveContains(name) ?? false) {
+           !(cleanTitle?.localizedCaseInsensitiveContains(name) ?? false) {
             parts.append(name)
         }
-        if parts.isEmpty { parts.append("Дорожка \(id)") }
+        if parts.isEmpty { parts.append(external ? "Внешние" : "Дорожка \(id)") }
         return parts.joined(separator: " · ")
     }
 
     var details: String {
         var parts: [String] = []
-        if let codec, !codec.isEmpty { parts.append(codec.uppercased()) }
+        if let codec, let name = Self.codecName(codec) { parts.append(name) }
         if let channels {
             switch channels {
             case 1: parts.append("моно")
@@ -86,12 +100,29 @@ struct MediaTrack: Identifiable, Hashable {
             }
         }
         if forced { parts.append("форсированные") }
-        if external { parts.append("внешние") }
+        if external && cleanTitle != "Из Lampa" { parts.append("внешние") }
         return parts.joined(separator: ", ")
     }
 
     var menuTitle: String {
         details.isEmpty ? label : "\(label) — \(details)"
+    }
+
+    private static let codecNames: [String: String] = [
+        "subrip": "SRT", "srt": "SRT", "ass": "ASS", "ssa": "SSA", "webvtt": "VTT", "mov_text": "TX3G",
+        "hdmv_pgs_subtitle": "PGS", "pgssub": "PGS", "dvd_subtitle": "VobSub", "dvdsub": "VobSub",
+        "dvb_subtitle": "DVB", "eia_608": "CC", "text": "Текст",
+        "ac3": "AC3", "eac3": "E-AC3", "dts": "DTS", "truehd": "TrueHD", "mlp": "MLP", "aac": "AAC",
+        "opus": "Opus", "flac": "FLAC", "mp3": "MP3", "mp2": "MP2", "vorbis": "Vorbis", "pcm_s16le": "PCM",
+        "pcm_s24le": "PCM", "alac": "ALAC"
+    ]
+
+    static func codecName(_ codec: String) -> String? {
+        let key = codec.lowercased()
+        if let known = codecNames[key] { return known }
+        if key.hasPrefix("pcm_") { return "PCM" }
+        // Неизвестный длинный кодек в списке только мешает.
+        return key.count <= 6 ? key.uppercased() : nil
     }
 
     private static let iso3to1: [String: String] = [

@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import MediaPlayer
+import AVFoundation
 
 struct MPVVideoContainer: UIViewRepresentable {
     let view: MPVVideoView
@@ -7,11 +9,80 @@ struct MPVVideoContainer: UIViewRepresentable {
     func updateUIView(_ uiView: MPVVideoView, context: Context) {}
 }
 
+/// Системная громкость. Публичного API нет, поэтому двигаем ползунок скрытого MPVolumeView.
+/// Пока он в иерархии окон, iOS не показывает свой HUD громкости.
+final class SystemVolume {
+    static let shared = SystemVolume()
+    let view: MPVolumeView = {
+        let v = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 120, height: 40))
+        v.alpha = 0.0001
+        v.isUserInteractionEnabled = false
+        return v
+    }()
+
+    var current: Double { Double(AVAudioSession.sharedInstance().outputVolume) }
+
+    func set(_ value: Double) {
+        guard let slider = view.subviews.compactMap({ $0 as? UISlider }).first else { return }
+        slider.value = Float(min(max(value, 0), 1))
+    }
+}
+
+struct VolumeViewHost: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView(frame: .zero)
+        container.isUserInteractionEnabled = false
+        container.clipsToBounds = true
+        container.addSubview(SystemVolume.shared.view)
+        return container
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+private struct HideSystemOverlays: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content
+                .persistentSystemOverlays(.hidden)
+                .defersSystemGestures(on: .all)
+        } else {
+            content
+        }
+    }
+}
+
+/// Кнопка-иконка с зоной нажатия 44×44, а не размером с глиф.
+private struct IconButton: View {
+    let systemName: String
+    var size: CGFloat = 22
+    var box: CGFloat = 44
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: size, weight: .semibold))
+                .frame(width: box, height: box)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private enum Adjustment: Equatable {
+    case brightness(Double)
+    case volume(Double)
+}
+
 struct PlayerView: View {
     @StateObject private var model: PlayerModel
     @Environment(\.dismiss) private var dismiss
     @State private var sheet: PlayerSheet?
     @State private var showLog = false
+    @State private var adjustment: Adjustment?
+    @State private var adjustStart: Double?
+    @State private var adjustHideToken = 0
+    @State private var originalBrightness: CGFloat?
 
     init(request: PlaybackRequest) {
         _model = StateObject(wrappedValue: PlayerModel(request: request))
@@ -23,6 +94,10 @@ struct PlayerView: View {
 
             MPVVideoContainer(view: model.videoView)
                 .ignoresSafeArea()
+
+            VolumeViewHost()
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
 
             gestureLayer
 
@@ -36,6 +111,11 @@ struct PlayerView: View {
                     .transition(.opacity)
             }
 
+            if let adjustment {
+                adjustmentIndicator(adjustment)
+                    .allowsHitTesting(false)
+            }
+
             if let toast = model.toast {
                 Text(toast)
                     .font(.headline)
@@ -43,15 +123,20 @@ struct PlayerView: View {
                     .background(Color.black.opacity(0.65))
                     .clipShape(Capsule())
                     .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 80)
                     .allowsHitTesting(false)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 70)
             }
 
             if let offer = model.resumeOffer, !model.loading, model.errorMessage == nil {
-                resumeBanner(offer)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(.leading, 24).padding(.bottom, 90)
+                VStack {
+                    Spacer()
+                    HStack {
+                        resumeBanner(offer)
+                        Spacer()
+                    }
+                }
+                .padding(.leading, 24).padding(.bottom, 100)
             }
 
             if let error = model.errorMessage {
@@ -60,16 +145,19 @@ struct PlayerView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: model.controlsVisible)
         .statusBar(hidden: true)
+        .modifier(HideSystemOverlays())
         .preferredColorScheme(.dark)
         .onAppear {
             Orientation.lock(.landscape)
             UIApplication.shared.isIdleTimerDisabled = true
+            originalBrightness = UIScreen.main.brightness
             AudioSession.activate()
             model.start()
         }
         .onDisappear {
             model.shutdown()
             UIApplication.shared.isIdleTimerDisabled = false
+            if let originalBrightness { UIScreen.main.brightness = originalBrightness }
             AudioSession.deactivate()
             Orientation.lock(.all)
             openSuccessCallback()
@@ -88,11 +176,14 @@ struct PlayerView: View {
 
     // MARK: - Жесты
 
+    /// Левая половина: двойной тап −10 с, свайп вверх/вниз — яркость.
+    /// Правая половина: двойной тап +10 с, свайп вверх/вниз — громкость. Щипок — вписать/заполнить.
     private var gestureLayer: some View {
-        HStack(spacing: 0) {
-            tapZone(seek: -10)
-            tapZone(seek: nil)
-            tapZone(seek: 10)
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                sideZone(left: true, height: geo.size.height)
+                sideZone(left: false, height: geo.size.height)
+            }
         }
         .ignoresSafeArea()
         .gesture(
@@ -102,13 +193,67 @@ struct PlayerView: View {
         )
     }
 
-    private func tapZone(seek delta: Double?) -> some View {
+    private func sideZone(left: Bool, height: CGFloat) -> some View {
         Color.clear
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                if let delta { model.seek(by: delta) } else { model.toggleFill() }
-            }
+            .onTapGesture(count: 2) { model.seek(by: left ? -10 : 10) }
             .onTapGesture { model.toggleControls() }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { drag in
+                        if adjustStart == nil {
+                            // Только явно вертикальный свайп, горизонтальный не трогаем.
+                            guard abs(drag.translation.height) > abs(drag.translation.width) * 1.5 else { return }
+                            adjustStart = left ? Double(UIScreen.main.brightness) : SystemVolume.shared.current
+                        }
+                        guard let start = adjustStart else { return }
+                        let delta = -Double(drag.translation.height) / Double(max(height * 0.6, 1))
+                        let value = min(max(start + delta, 0), 1)
+                        if left {
+                            UIScreen.main.brightness = CGFloat(value)
+                            adjustment = .brightness(value)
+                        } else {
+                            SystemVolume.shared.set(value)
+                            adjustment = .volume(value)
+                        }
+                    }
+                    .onEnded { _ in
+                        adjustStart = nil
+                        adjustHideToken += 1
+                        let token = adjustHideToken
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            if token == adjustHideToken { withAnimation { adjustment = nil } }
+                        }
+                    }
+            )
+    }
+
+    private func adjustmentIndicator(_ adjustment: Adjustment) -> some View {
+        let icon: String
+        let value: Double
+        let alignment: Alignment
+        switch adjustment {
+        case .brightness(let v):
+            icon = "sun.max.fill"; value = v; alignment = .leading
+        case .volume(let v):
+            icon = v == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill"; value = v; alignment = .trailing
+        }
+        return VStack(spacing: 10) {
+            Image(systemName: icon).font(.system(size: 20, weight: .semibold))
+            ZStack(alignment: .bottom) {
+                Capsule().fill(Color.white.opacity(0.25))
+                Capsule().fill(Color.white).frame(height: 140 * value)
+            }
+            .frame(width: 6, height: 140)
+            Text("\(Int((value * 100).rounded()))")
+                .font(.caption.monospacedDigit())
+        }
+        .foregroundColor(.white)
+        .padding(.vertical, 14).padding(.horizontal, 12)
+        .background(Color.black.opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+        .padding(.horizontal, 60)
     }
 
     // MARK: - Элементы управления
@@ -122,22 +267,21 @@ struct PlayerView: View {
 
             VStack(spacing: 0) {
                 topBar
-                Spacer()
+                Spacer(minLength: 0)
                 centerButtons
-                Spacer()
-                bottomBar
+                Spacer(minLength: 0)
+                BottomBar(clock: model.clock) { model.seek(to: $0) }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
         }
         .foregroundColor(.white)
     }
 
     private var topBar: some View {
-        HStack(spacing: 18) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.title3.weight(.semibold))
-            }
+        HStack(spacing: 6) {
+            IconButton(systemName: "xmark") { dismiss() }
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.current.displayTitle)
                     .font(.headline)
@@ -148,18 +292,15 @@ struct PlayerView: View {
                         .foregroundColor(.white.opacity(0.7))
                 }
             }
-            Spacer()
-            Button { sheet = .audio } label: {
-                Image(systemName: "waveform").font(.title3)
-            }
-            Button { sheet = .subtitles } label: {
-                Image(systemName: model.subTracks.contains(where: { $0.selected }) ? "captions.bubble.fill" : "captions.bubble")
-                    .font(.title3)
+            .padding(.leading, 4)
+            .allowsHitTesting(false)
+            Spacer(minLength: 8)
+            IconButton(systemName: "waveform") { sheet = .audio }
+            IconButton(systemName: model.subTracks.contains(where: { $0.selected }) ? "captions.bubble.fill" : "captions.bubble") {
+                sheet = .subtitles
             }
             if model.items.count > 1 {
-                Button { sheet = .playlist } label: {
-                    Image(systemName: "list.bullet").font(.title3)
-                }
+                IconButton(systemName: "list.bullet") { sheet = .playlist }
             }
             moreMenu
         }
@@ -183,56 +324,29 @@ struct PlayerView: View {
                       systemImage: model.fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
             }
         } label: {
-            Image(systemName: "ellipsis.circle").font(.title3)
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 22, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
     }
 
     private var centerButtons: some View {
-        HStack(spacing: 44) {
+        HStack(spacing: 28) {
             if model.items.count > 1 {
-                Button { model.previous() } label: {
-                    Image(systemName: "backward.end.fill").font(.title2)
-                }
-                .disabled(!model.hasPrevious)
-                .opacity(model.hasPrevious ? 1 : 0.35)
+                IconButton(systemName: "backward.end.fill", size: 26, box: 60) { model.previous() }
+                    .disabled(!model.hasPrevious)
+                    .opacity(model.hasPrevious ? 1 : 0.35)
             }
-            Button { model.seek(by: -10) } label: {
-                Image(systemName: "gobackward.10").font(.title)
-            }
-            Button { model.togglePause() } label: {
-                Image(systemName: model.paused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 44))
-                    .frame(width: 64, height: 64)
-            }
-            .opacity(model.loading ? 0 : 1)
-            Button { model.seek(by: 10) } label: {
-                Image(systemName: "goforward.10").font(.title)
-            }
+            IconButton(systemName: "gobackward.10", size: 30, box: 60) { model.seek(by: -10) }
+            IconButton(systemName: model.paused ? "play.fill" : "pause.fill", size: 44, box: 76) { model.togglePause() }
+                .opacity(model.loading ? 0 : 1)
+            IconButton(systemName: "goforward.10", size: 30, box: 60) { model.seek(by: 10) }
             if model.items.count > 1 {
-                Button { model.next() } label: {
-                    Image(systemName: "forward.end.fill").font(.title2)
-                }
-                .disabled(!model.hasNext)
-                .opacity(model.hasNext ? 1 : 0.35)
+                IconButton(systemName: "forward.end.fill", size: 26, box: 60) { model.next() }
+                    .disabled(!model.hasNext)
+                    .opacity(model.hasNext ? 1 : 0.35)
             }
-        }
-    }
-
-    private var bottomBar: some View {
-        VStack(spacing: 6) {
-            Scrubber(position: model.position, duration: model.duration, cacheEnd: model.cacheEnd,
-                     scrubTime: $model.scrubTime) { target in
-                model.seek(to: target)
-            }
-            HStack {
-                Text(PlayerModel.formatTime(model.scrubTime ?? model.position))
-                Spacer()
-                if model.duration > 0 {
-                    Text("−" + PlayerModel.formatTime(max(0, model.duration - (model.scrubTime ?? model.position))))
-                }
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundColor(.white.opacity(0.85))
         }
     }
 
@@ -315,6 +429,27 @@ struct PlayerView: View {
         guard let raw = model.successURL, let url = URL(string: raw),
               let scheme = url.scheme?.lowercased(), scheme != "http", scheme != "https", scheme != "infuse" else { return }
         UIApplication.shared.open(url)
+    }
+}
+
+struct BottomBar: View {
+    @ObservedObject var clock: PlaybackClock
+    let onSeek: (Double) -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Scrubber(position: clock.position, duration: clock.duration, cacheEnd: clock.cacheEnd,
+                     scrubTime: $clock.scrubTime, onCommit: onSeek)
+            HStack {
+                Text(PlayerModel.formatTime(clock.scrubTime ?? clock.position))
+                Spacer()
+                if clock.duration > 0 {
+                    Text("−" + PlayerModel.formatTime(max(0, clock.duration - (clock.scrubTime ?? clock.position))))
+                }
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundColor(.white.opacity(0.85))
+        }
     }
 }
 
