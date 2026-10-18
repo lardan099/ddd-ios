@@ -1,0 +1,72 @@
+name: LampaPlayer
+options:
+  bundleIdPrefix: com.lampaplayer
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit.git
+    exactVersion: 1.0.0
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+
+targets:
+  LampaPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - path: LampaPlayer
+        excludes:
+          - "Fonts/**"
+          - "Info.plist"
+      # папкой, чтобы в бандле был каталог Fonts/ — его отдаём mpv как sub-fonts-dir
+      - path: LampaPlayer/Fonts
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: MPVKit
+        product: MPVKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lampaplayer.app
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_BITCODE: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+    info:
+      path: LampaPlayer/Info.plist
+      properties:
+        CFBundleDisplayName: Lampa Player
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: Нужно, чтобы смотреть видео с TorrServer в домашней сети.
+        CFBundleURLTypes:
+          # Lampa на iPhone умеет отдавать видео только в известные плееры.
+          # Перехватываем их схемы: infuse:// (плейлист, позиция, субтитры) и senplayer:// (одна ссылка).
+          - CFBundleURLName: com.lampaplayer.infuse
+            CFBundleURLSchemes: [infuse]
+          - CFBundleURLName: com.lampaplayer.senplayer
+            CFBundleURLSchemes: [senplayer]
+          - CFBundleURLName: com.lampaplayer.own
+            CFBundleURLSchemes: [lampaplayer]

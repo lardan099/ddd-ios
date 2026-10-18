@@ -1,0 +1,142 @@
+import Foundation
+
+struct PlayItem: Codable, Hashable {
+    var url: String
+    /// Имя файла / серии, как его передала Lampa (filename в infuse://).
+    var title: String?
+    /// Внешние субтитры (sub в infuse://).
+    var sub: String?
+    /// Позиция старта в секундах, которую передала Lampa.
+    var position: Double?
+
+    var displayTitle: String {
+        if let title, !title.isEmpty { return Self.stripExtension(title) }
+        if let comps = URLComponents(string: url) {
+            let last = (comps.path as NSString).lastPathComponent
+            if !last.isEmpty, last != "/" { return Self.stripExtension(last) }
+            if let host = comps.host { return host }
+        }
+        return url
+    }
+
+    /// Ключ для запоминания позиции. У TorrServer ссылка меняется (адрес сервера, &play/&preload),
+    /// а пара hash+index — нет. У онлайн-источников ссылки протухают, поэтому опираемся на имя от Lampa.
+    var resumeKey: String {
+        if let comps = URLComponents(string: url), comps.path.contains("/stream"),
+           let link = comps.queryItems?.first(where: { $0.name == "link" })?.value, !link.isEmpty {
+            let index = comps.queryItems?.first(where: { $0.name == "index" })?.value ?? "1"
+            return "ts:\(link.lowercased()):\(index)"
+        }
+        if let title, !title.isEmpty { return "t:\(title)" }
+        if var comps = URLComponents(string: url) {
+            comps.query = nil
+            return "u:" + (comps.string ?? url)
+        }
+        return "u:" + url
+    }
+
+    static func stripExtension(_ name: String) -> String {
+        let ext = (name as NSString).pathExtension.lowercased()
+        let known = ["mkv", "mp4", "avi", "m4v", "mov", "ts", "m2ts", "webm", "wmv", "flv", "mpg", "mpeg", "m3u8", "vob"]
+        return known.contains(ext) ? (name as NSString).deletingPathExtension : name
+    }
+}
+
+struct PlaybackRequest: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var items: [PlayItem]
+    var startIndex: Int
+    /// infuse / senplayer / lampaplayer / link / history
+    var source: String
+    /// x-success из infuse://, если Lampa его передала.
+    var successURL: String?
+}
+
+struct MediaTrack: Identifiable, Hashable {
+    let id: Int
+    let title: String?
+    let lang: String?
+    let codec: String?
+    let channels: Int?
+    let external: Bool
+    let forced: Bool
+    let selected: Bool
+
+    var label: String {
+        var parts: [String] = []
+        if let title, !title.isEmpty { parts.append(title) }
+        if let lang, let name = Self.languageName(lang),
+           !(title?.localizedCaseInsensitiveContains(name) ?? false) {
+            parts.append(name)
+        }
+        if parts.isEmpty { parts.append("Дорожка \(id)") }
+        return parts.joined(separator: " · ")
+    }
+
+    var details: String {
+        var parts: [String] = []
+        if let codec, !codec.isEmpty { parts.append(codec.uppercased()) }
+        if let channels {
+            switch channels {
+            case 1: parts.append("моно")
+            case 2: parts.append("стерео")
+            case 6: parts.append("5.1")
+            case 8: parts.append("7.1")
+            default: parts.append("\(channels) кан.")
+            }
+        }
+        if forced { parts.append("форсированные") }
+        if external { parts.append("внешние") }
+        return parts.joined(separator: ", ")
+    }
+
+    var menuTitle: String {
+        details.isEmpty ? label : "\(label) — \(details)"
+    }
+
+    private static let iso3to1: [String: String] = [
+        "rus": "ru", "eng": "en", "ukr": "uk", "bel": "be", "kaz": "kk", "ger": "de", "deu": "de",
+        "fre": "fr", "fra": "fr", "spa": "es", "ita": "it", "jpn": "ja", "kor": "ko", "chi": "zh",
+        "zho": "zh", "pol": "pl", "por": "pt", "tur": "tr", "und": ""
+    ]
+
+    static func languageName(_ code: String) -> String? {
+        let lower = code.lowercased()
+        let short = iso3to1[lower] ?? lower
+        guard !short.isEmpty, let name = Locale.current.localizedString(forLanguageCode: short) else { return nil }
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+}
+
+enum LanguagePrefs {
+    private static let iso1to3: [String: [String]] = [
+        "ru": ["rus"], "en": ["eng"], "uk": ["ukr"], "be": ["bel"], "kk": ["kaz"], "de": ["ger", "deu"],
+        "fr": ["fre", "fra"], "es": ["spa"], "it": ["ita"], "ja": ["jpn"], "ko": ["kor"], "zh": ["chi", "zho"],
+        "pl": ["pol"], "pt": ["por"], "tr": ["tur"]
+    ]
+
+    /// Список языков для alang/slang: выбранный в настройках или языки системы.
+    static func mpvList() -> String {
+        let override = UserDefaults.standard.string(forKey: AppSettings.languageKey) ?? ""
+        let source = override.isEmpty ? Locale.preferredLanguages : [override]
+        var codes: [String] = []
+        for id in source {
+            let two = String(id.prefix(while: { $0 != "-" && $0 != "_" })).lowercased()
+            guard !two.isEmpty else { continue }
+            codes.append(two)
+            codes.append(contentsOf: iso1to3[two] ?? [])
+        }
+        if codes.isEmpty { codes = ["ru", "rus"] }
+        var seen = Set<String>()
+        return codes.filter { seen.insert($0).inserted }.joined(separator: ",")
+    }
+}
+
+enum AppSettings {
+    static let hwdecKey = "hwdec"
+    static let languageKey = "preferredLanguage"
+
+    static var hwdec: Bool {
+        UserDefaults.standard.object(forKey: hwdecKey) as? Bool ?? true
+    }
+}
