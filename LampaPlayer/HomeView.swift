@@ -16,6 +16,7 @@ struct HomeView: View {
     @AppStorage(AppSettings.autoPiPKey) private var autoPiP = true
     @AppStorage(AppSettings.skipModeKey) private var skipMode = AppSettings.SkipMode.button.rawValue
     @State private var pluginCopied = false
+    @AppStorage(AppSettings.autoNextKey) private var autoNext = true
     @State private var pendingLampaMarks = 0
 
     static let pluginURL = "https://lardan099.github.io/lampa-player-plugin/lampa-player.js"
@@ -186,6 +187,7 @@ struct HomeView: View {
                         }
                     }
                     Toggle("Аппаратное декодирование", isOn: $hwdec)
+                    Toggle("Отсчёт до следующей серии", isOn: $autoNext)
                     if !history.isEmpty {
                         Button("Очистить историю", role: .destructive) { confirmClear = true }
                     }

@@ -42,9 +42,10 @@ struct VolumeViewHost: UIViewRepresentable {
 private struct HideSystemOverlays: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 16.0, *) {
+            // Системные жесты НЕ откладываем: иначе первый свайп за шторку или домой достаётся
+            // плееру и дёргает яркость/громкость. От случайных срабатываний защищают мёртвые зоны у краёв.
             content
                 .persistentSystemOverlays(.hidden)
-                .defersSystemGestures(on: .all)
         } else {
             content
         }
@@ -79,6 +80,8 @@ private enum DragMode {
     case brightness(Double)
     case volume(Double)
     case seek(Double)
+    /// Свайп от края экрана (системный жест) — до конца жеста ничего не делаем.
+    case ignored
 }
 
 struct PlayerView: View {
@@ -161,7 +164,18 @@ struct PlayerView: View {
                 .padding(.leading, 24).padding(.bottom, 130)
             }
 
-            if let segment = model.activeSegment, !locked, model.errorMessage == nil {
+            if let seconds = model.nextCountdown, model.errorMessage == nil {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        nextEpisodeCard(seconds)
+                    }
+                }
+                .padding(.trailing, 24)
+                .padding(.bottom, model.controlsVisible ? 130 : 40)
+                .transition(.opacity)
+            } else if let segment = model.activeSegment, !locked, model.errorMessage == nil {
                 VStack {
                     Spacer()
                     HStack {
@@ -268,8 +282,14 @@ struct PlayerView: View {
     private func dragChanged(_ drag: DragGesture.Value, left: Bool, size: CGSize) {
         guard !locked else { return }
         if dragMode == nil {
+            // Свайп начался у верхнего/нижнего края — это шторка, Пункт управления или «домой», не наш жест.
+            let edge: CGFloat = 60
+            if drag.startLocation.y < edge || drag.startLocation.y > size.height - edge {
+                dragMode = .ignored
+                return
+            }
             let dx = abs(drag.translation.width), dy = abs(drag.translation.height)
-            if dy > dx * 1.5 {
+            if dy > dx * 1.5, dy > 20 {
                 dragMode = left ? .brightness(Double(UIScreen.main.brightness)) : .volume(SystemVolume.shared.current)
             } else if dx > dy * 1.5, model.clock.duration > 0 {
                 dragMode = .seek(model.clock.position)
@@ -292,7 +312,7 @@ struct PlayerView: View {
             model.clock.scrubTime = target
             seekPreview = (target, target - start)
             model.thumbnails.request(time: target)
-        case .none:
+        case .ignored, .none:
             break
         }
     }
@@ -366,6 +386,43 @@ struct PlayerView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
         .padding(.horizontal, isPortrait ? 24 : 60)
+    }
+
+    private func nextEpisodeCard(_ seconds: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Следующая серия через \(seconds)")
+                .font(.headline.monospacedDigit())
+            if let title = model.nextTitle {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.75))
+                    .lineLimit(2)
+            }
+            HStack(spacing: 10) {
+                Button { model.playNextNow() } label: {
+                    Label("Смотреть", systemImage: "play.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(Color.white)
+                        .foregroundColor(.black)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { model.cancelNextCountdown() } label: {
+                    Text("Отмена")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(Color.white.opacity(0.2))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .foregroundColor(.white)
+        .padding(16)
+        .frame(maxWidth: 320, alignment: .leading)
+        .background(Color.black.opacity(0.78))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private func seekPreviewView(_ preview: (target: Double, delta: Double)) -> some View {

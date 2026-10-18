@@ -104,7 +104,8 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var speedText: String?
     @Published private(set) var audioTracks: [MediaTrack] = []
     @Published private(set) var subTracks: [MediaTrack] = []
-    @Published private(set) var playbackSpeed: Double = 1
+    @Published private(set) var playbackSpeed: Double = AppSettings.playbackSpeed
+    @Published private(set) var nextCountdown: Int?
     @Published private(set) var fill = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var finished = false
@@ -161,6 +162,9 @@ final class PlayerModel: ObservableObject {
     private var wasPlayingBeforeInterruption = false
     private var decoderResets = 0
     private var skippedSegments: Set<SkipRange> = []
+    private var countdownRemaining: Double?
+    private var countdownLastTick: Date?
+    private var countdownCancelled = false
 
     // Только очередь mpv.
     private var destroyed = false
@@ -249,6 +253,7 @@ final class PlayerModel: ObservableObject {
             ("sub-shadow-offset", "1"),
             ("sub-ass-force-margins", "yes"),
             ("sub-scale", String(format: "%.2f", subScale)),
+            ("speed", String(format: "%.2f", playbackSpeed)),
         ]
         for (name, value) in options {
             check(mpv_set_option_string(mpv, name, value), "\(name)=\(value)")
@@ -292,6 +297,13 @@ final class PlayerModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
         play(index: index)
         scheduleHide()
+        if playbackSpeed != 1 {
+            // Скорость запомнилась с прошлого раза — напоминаем, чтобы не удивляться.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                self.showToast("Скорость \(Self.formatSpeed(self.playbackSpeed))")
+            }
+        }
     }
 
     func shutdown() {
@@ -374,6 +386,8 @@ final class PlayerModel: ObservableObject {
         decoderResets = 0
         activeSegment = nil
         clock.segments = []
+        countdownCancelled = false
+        clearNextCountdown()
 
         let item = items[newIndex]
         thumbnails.load(item.thumbnails)
@@ -476,6 +490,7 @@ final class PlayerModel: ObservableObject {
         guard alive else { return }
         setDouble("speed", value)
         playbackSpeed = value
+        AppSettings.playbackSpeed = value
         showToast(value == 1 ? "Обычная скорость" : "Скорость \(Self.formatSpeed(value))")
     }
 
@@ -636,6 +651,7 @@ final class PlayerModel: ObservableObject {
         pip?.update(position: position, rate: paused ? 0 : playbackSpeed)
         updateNowPlaying()
         updateActiveSegment()
+        updateNextCountdown()
 
         ticks += 1
         if ticks % 10 == 0 { saveProgress() }
@@ -981,7 +997,9 @@ final class PlayerModel: ObservableObject {
             if activeSegment != nil { activeSegment = nil }
             return
         }
-        let segment = clock.segments.first { position >= $0.start && position < $0.end - 1 }
+        var segment = clock.segments.first { position >= $0.start && position < $0.end - 1 }
+        // Финальные титры при следующей серии — дело отсчёта «Следующая серия через N», а не «Пропустить».
+        if let current = segment, current == creditsSegment, hasNext, AppSettings.autoNext { segment = nil }
         if mode == .auto, let segment, !skippedSegments.contains(segment) {
             skippedSegments.insert(segment)
             seek(to: segment.end)
@@ -997,6 +1015,60 @@ final class PlayerModel: ObservableObject {
         skippedSegments.insert(segment)
         activeSegment = nil
         seek(to: segment.end)
+    }
+
+    // MARK: - Следующая серия
+
+    /// Метка финальных титров: заставочная метка во второй половине серии.
+    private var creditsSegment: SkipRange? {
+        guard duration > 0 else { return nil }
+        return clock.segments.first { $0.kind == .intro && $0.start > duration * 0.55 }
+    }
+
+    var nextTitle: String? { hasNext ? items[index + 1].displayTitle : nil }
+
+    /// Вызывается из тика. Старт — на метке титров, без меток — за 20 с до конца. На паузе замирает.
+    private func updateNextCountdown() {
+        guard AppSettings.autoNext, hasNext, !loading, duration > 60, !countdownCancelled,
+              scrubTime == nil, errorMessage == nil else {
+            clearNextCountdown()
+            return
+        }
+        let trigger = creditsSegment?.start ?? max(duration - 20, 0)
+        guard position >= trigger else {
+            clearNextCountdown()
+            return
+        }
+        let now = Date()
+        if countdownRemaining == nil {
+            countdownRemaining = 10
+        } else if !paused, let last = countdownLastTick {
+            countdownRemaining! -= now.timeIntervalSince(last)
+        }
+        countdownLastTick = now
+        if countdownRemaining! <= 0 {
+            clearNextCountdown()
+            next()
+            return
+        }
+        let shown = Int(countdownRemaining!.rounded(.up))
+        if nextCountdown != shown { nextCountdown = shown }
+    }
+
+    func playNextNow() {
+        clearNextCountdown()
+        next()
+    }
+
+    func cancelNextCountdown() {
+        countdownCancelled = true
+        clearNextCountdown()
+    }
+
+    private func clearNextCountdown() {
+        countdownRemaining = nil
+        countdownLastTick = nil
+        if nextCountdown != nil { nextCountdown = nil }
     }
 
     // MARK: - Доступ к libmpv

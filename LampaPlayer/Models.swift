@@ -220,6 +220,23 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: skipModeKey) }
     }
 
+    static let autoNextKey = "autoNext"
+    static let playbackSpeedKey = "playbackSpeed"
+
+    /// Отсчёт «Следующая серия через 10 с» на титрах.
+    static var autoNext: Bool {
+        UserDefaults.standard.object(forKey: autoNextKey) as? Bool ?? true
+    }
+
+    /// Скорость воспроизведения переживает закрытие плеера.
+    static var playbackSpeed: Double {
+        get {
+            let value = UserDefaults.standard.double(forKey: playbackSpeedKey)
+            return value > 0 ? value : 1
+        }
+        set { UserDefaults.standard.set(newValue, forKey: playbackSpeedKey) }
+    }
+
     static var hwdec: Bool {
         UserDefaults.standard.object(forKey: hwdecKey) as? Bool ?? true
     }
