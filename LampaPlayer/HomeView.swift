@@ -239,8 +239,8 @@ struct HomeView: View {
             }
             .navigationTitle("Lampa Player")
             .toolbar {
-                if router.showLampa {
-                    ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .confirmationAction) {
+                    if router.showLampa {
                         Button("Готово") { router.showSettings = false }
                     }
                 }
