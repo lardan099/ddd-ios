@@ -17,6 +17,8 @@ struct HomeView: View {
     @AppStorage(AppSettings.skipModeKey) private var skipMode = AppSettings.SkipMode.button.rawValue
     @State private var pluginCopied = false
     @AppStorage(AppSettings.autoNextKey) private var autoNext = true
+    @AppStorage(AppSettings.lampaURLKey) private var lampaURL = AppSettings.defaultLampaURL
+    @AppStorage(AppSettings.lampaEnabledKey) private var lampaEnabled = true
     @State private var pendingLampaMarks = 0
 
     static let pluginURL = "https://lardan099.github.io/lampa-player-plugin/lampa-player.js"
@@ -36,6 +38,27 @@ struct HomeView: View {
     var body: some View {
         NavigationView {
             Form {
+                Section {
+                    TextField("Адрес Lampa, например lampa.mx", text: $lampaURL)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                    Toggle("Открывать Lampa при запуске", isOn: $lampaEnabled)
+                    if router.showLampa {
+                        Button("Экран плеера вместо Lampa") {
+                            router.showSettings = false
+                            router.showLampa = false
+                        }
+                    } else {
+                        Button("Открыть Lampa") { router.showLampa = true }
+                            .disabled(AppSettings.normalizedLampaURL(lampaURL) == nil)
+                    }
+                } header: {
+                    Text("Lampa")
+                } footer: {
+                    Text("Lampa открывается прямо в приложении: плагин подключается сам, видео сразу идёт в этот плеер, отметки просмотра возвращаются напрямую. Настройки плеера — пункт «Lampa Player» в меню Lampa.")
+                }
+
                 Section {
                     TextField("http://… или ссылка infuse://, senplayer://", text: $link)
                         .keyboardType(.URL)
@@ -215,6 +238,13 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("Lampa Player")
+            .toolbar {
+                if router.showLampa {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Готово") { router.showSettings = false }
+                    }
+                }
+            }
             .confirmationDialog("Очистить историю и позиции просмотра?", isPresented: $confirmClear, titleVisibility: .visible) {
                 Button("Очистить", role: .destructive) {
                     HistoryStore.clear()

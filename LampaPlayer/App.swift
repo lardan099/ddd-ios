@@ -9,17 +9,28 @@ struct LampaPlayerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HomeView()
-                .environmentObject(router)
-                .onOpenURL { router.open($0) }
-                .fullScreenCover(item: $router.request) { request in
-                    PlayerView(request: request)
+            Group {
+                if router.showLampa {
+                    LampaScreen()
+                } else {
+                    HomeView()
                 }
-                .alert("Не получилось открыть ссылку", isPresented: $router.showParseError) {
-                    Button("OK", role: .cancel) {}
-                } message: {
-                    Text(router.lastBadURL ?? "")
-                }
+            }
+            .environmentObject(router)
+            .onOpenURL { router.open($0) }
+            .fullScreenCover(item: $router.request) { request in
+                PlayerView(request: request)
+            }
+            .alert("Не получилось открыть ссылку", isPresented: $router.showParseError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(router.lastBadURL ?? "")
+            }
+            .alert("Lampa", isPresented: $router.showWebAlertFlag) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(router.webAlertText)
+            }
         }
     }
 }
@@ -28,6 +39,12 @@ final class Router: ObservableObject {
     @Published var request: PlaybackRequest?
     @Published var showParseError = false
     @Published private(set) var lastBadURL: String?
+    /// Главный экран — встроенная Lampa (иначе — экран плеера с историей и настройками).
+    @Published var showLampa = AppSettings.lampaEnabled && AppSettings.normalizedLampaURL(AppSettings.lampaURL) != nil
+    /// Настройки плеера поверх встроенной Lampa.
+    @Published var showSettings = false
+    @Published var showWebAlertFlag = false
+    @Published private(set) var webAlertText = ""
 
     func open(_ url: URL) {
         guard let parsed = LaunchParser.parse(url) else {
@@ -42,7 +59,18 @@ final class Router: ObservableObject {
         showParseError = true
     }
 
+    func showWebAlert(_ text: String) {
+        webAlertText = text
+        showWebAlertFlag = true
+    }
+
     func present(_ newRequest: PlaybackRequest) {
+        // Плеер показывается с корня — сначала убираем шторку настроек, если она открыта.
+        if showSettings {
+            showSettings = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.present(newRequest) }
+            return
+        }
         if request == nil {
             request = newRequest
             return

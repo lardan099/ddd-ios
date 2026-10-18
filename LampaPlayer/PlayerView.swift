@@ -226,6 +226,8 @@ struct PlayerView: View {
             AudioSession.deactivate()
             Orientation.lock(.all)
             openSuccessCallback()
+            // Встроенная Lampa сразу ставит отметки просмотра.
+            NotificationCenter.default.post(name: .lampaPlayerDidClose, object: nil)
         }
         .onChange(of: model.finished) { finished in
             if finished { dismiss() }

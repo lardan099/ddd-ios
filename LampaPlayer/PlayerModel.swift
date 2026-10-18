@@ -239,7 +239,8 @@ final class PlayerModel: ObservableObject {
             ("demuxer-readahead-secs", "30"),
             ("network-timeout", "90"),
             // Онлайн-CDN (okcdn и т.п.) сверяют UA с тем, что был у браузера при получении ссылки.
-            ("user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
+            // UA встроенной Lampa (если открывали её) — точное совпадение с браузером, который получил ссылку.
+            ("user-agent", AppSettings.webUserAgent ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
             // Автовыбор озвучки и субтитров по языку.
             ("alang", languages),
             ("slang", languages),

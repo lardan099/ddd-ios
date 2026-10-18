@@ -228,6 +228,37 @@ enum AppSettings {
         UserDefaults.standard.object(forKey: autoNextKey) as? Bool ?? true
     }
 
+    static let lampaURLKey = "lampaURL"
+    static let lampaEnabledKey = "lampaEnabled"
+    static let webUserAgentKey = "webUserAgent"
+    static let defaultLampaURL = "http://lampa.byskaz.ru"
+
+    /// Адрес Lampa для встроенного режима.
+    static var lampaURL: String {
+        UserDefaults.standard.string(forKey: lampaURLKey) ?? defaultLampaURL
+    }
+
+    /// Открывать встроенную Lampa при запуске.
+    static var lampaEnabled: Bool {
+        UserDefaults.standard.object(forKey: lampaEnabledKey) as? Bool ?? true
+    }
+
+    /// «lampa.mx» → «http://lampa.mx». Пусто или мусор — nil.
+    static func normalizedLampaURL(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let withScheme = trimmed.contains("://") ? trimmed : "http://" + trimmed
+        guard let url = URL(string: withScheme), let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
+    /// Настоящий User-Agent встроенной Lampa. Им же ходит mpv: часть CDN (okcdn и др.)
+    /// сверяет UA с тем, что был у браузера при получении ссылки.
+    static var webUserAgent: String? {
+        get { UserDefaults.standard.string(forKey: webUserAgentKey) }
+        set { UserDefaults.standard.set(newValue, forKey: webUserAgentKey) }
+    }
+
     /// Скорость воспроизведения переживает закрытие плеера.
     static var playbackSpeed: Double {
         get {

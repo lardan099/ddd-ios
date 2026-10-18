@@ -12,7 +12,7 @@ packages:
 
 settings:
   base:
-    MARKETING_VERSION: "0.7.0"
+    MARKETING_VERSION: "0.8.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
 
@@ -28,6 +28,9 @@ targets:
       # папкой, чтобы в бандле был каталог Fonts/ — его отдаём mpv как sub-fonts-dir
       - path: LampaPlayer/Fonts
         type: folder
+        buildPhase: resources
+      # Плагин Lampa: встраивается во встроенную Lampa (тот же файл публикуется на GitHub Pages).
+      - path: plugin/lampa-player.js
         buildPhase: resources
     dependencies:
       - package: MPVKitAV

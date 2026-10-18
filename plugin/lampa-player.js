@@ -16,7 +16,7 @@
     if (window.__lampa_player_ios) return;
     window.__lampa_player_ios = true;
 
-    var VERSION = '1.0.0';
+    var VERSION = '1.1.0';
     var API = 'http://127.0.0.1:8090/lampaplayer';
     var MAX_URL = 60000;
 
@@ -139,7 +139,35 @@
         return url;
     }
 
+
     // --- Прогресс обратно в Lampa ---
+
+    // Lampa хранит хэши отметок числами — отдаём так же, иначе синхронизация с аккаунтом может не узнать запись.
+    function lampaHash(h) {
+        return /^\d+$/.test(String(h)) ? Number(h) : h;
+    }
+
+    /** Ставит отметки просмотра. Список: [{h, t, d, pc}]. Возвращает число применённых. */
+    function applyProgress(list) {
+        if (!window.Lampa || !Lampa.Timeline) return -1;
+        var count = 0;
+        (Array.isArray(list) ? list : []).forEach(function (p) {
+            if (!p || !p.h) return;
+            Lampa.Timeline.update({
+                hash: lampaHash(p.h),
+                percent: Math.max(0, Math.min(100, Math.round(p.pc || 0))),
+                time: Math.round(p.t || 0),
+                duration: Math.round(p.d || 0)
+            });
+            count++;
+        });
+        if (count) {
+            try { Lampa.Noty.show('Lampa Player: отметки просмотра обновлены (' + count + ')'); } catch (e) {}
+        }
+        return count;
+    }
+    // Встроенная Lampa (внутри приложения) ставит отметки напрямую через этот вызов.
+    window.__lampaPlayerApplyProgress = applyProgress;
 
     var syncing = false;
 
@@ -149,28 +177,42 @@
         fetch(API + '/progress', { cache: 'no-store' })
             .then(function (r) { return r.json(); })
             .then(function (list) {
-                var done = [];
-                (Array.isArray(list) ? list : []).forEach(function (p) {
-                    if (!p || !p.h) return;
-                    Lampa.Timeline.update({
-                        hash: p.h,
-                        percent: Math.max(0, Math.min(100, Math.round(p.pc || 0))),
-                        time: Math.round(p.t || 0),
-                        duration: Math.round(p.d || 0)
-                    });
-                    done.push(p.h);
-                });
-                if (done.length) {
+                var done = (Array.isArray(list) ? list : []).filter(function (p) { return p && p.h; })
+                    .map(function (p) { return String(p.h); });
+                if (applyProgress(list) > 0 && done.length) {
                     fetch(API + '/ack?h=' + encodeURIComponent(done.join(',')), { cache: 'no-store' }).catch(function () {});
-                    try { Lampa.Noty.show('Lampa Player: отметки просмотра обновлены (' + done.length + ')'); } catch (e) {}
                 }
             })
             .catch(function () {})
             .then(function () { syncing = false; });
     }
 
+    // --- Встроенная Lampa: связь с приложением ---
+
+    var native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampaPlayer;
+
+    function post(message) {
+        try { if (native) native.postMessage(message); } catch (e) {}
+    }
+
+    function addMenu() {
+        if (!native || !window.$) return;
+        if ($('.menu [data-lampa-player]').length) return;
+        var icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l10.6-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14z"/></svg>';
+        var btn = $('<li class="menu__item selector" data-lampa-player="1"><div class="menu__ico">' + icon +
+            '</div><div class="menu__text">Lampa Player</div></li>');
+        btn.on('hover:enter', function () { post({ action: 'settings' }); });
+        $('.menu .menu__list').eq(0).append(btn);
+        post({ action: 'menu' });
+    }
+
+    // --- Запуск ---
+
+    var started = false;
+
     function start() {
-        if (!isApple()) return;
+        if (started || !isApple()) return;
+        started = true;
 
         Lampa.Player.listener.follow('infuse_build_url', function (e) {
             try {
@@ -186,11 +228,21 @@
         window.addEventListener('focus', sync);
         setTimeout(sync, 3000);
 
-        console.log('Lampa Player', 'plugin ' + VERSION + ' ready');
+        addMenu();
+        post({ action: 'ready', version: VERSION, ua: navigator.userAgent });
+        console.log('Lampa Player', 'plugin ' + VERSION + ' ready' + (native ? ' (embedded)' : ''));
     }
 
-    if (window.appready) start();
-    else if (window.Lampa && Lampa.Listener) {
-        Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') start(); });
+    // Встроенный скрипт может выполниться раньше, чем Lampa загрузится — ждём её до минуты.
+    var listening = false;
+    function boot(tries) {
+        if (started) return;
+        if (window.appready && window.Lampa && Lampa.Player && Lampa.Player.listener) return start();
+        if (!listening && window.Lampa && Lampa.Listener) {
+            listening = true;
+            Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') start(); });
+        }
+        if (tries < 120) setTimeout(function () { boot(tries + 1); }, 500);
     }
+    boot(0);
 })();

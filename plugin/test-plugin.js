@@ -97,7 +97,7 @@ console.log('big ok: items', payload.items.length, 'length', result.length);
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    assert.deepStrictEqual(updates[0], { hash: '123456', percent: 41, time: 754, duration: 1855 });
+    assert.deepStrictEqual(updates[0], { hash: 123456, percent: 41, time: 754, duration: 1855 });
     assert(fetched.some((u) => u.includes('/ack?h=123456')), 'ack sent');
     console.log('progress sync ok');
 })();
