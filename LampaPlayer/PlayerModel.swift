@@ -14,18 +14,6 @@ final class MetalLayer: CAMetalLayer {
             }
         }
     }
-
-    // EDR включается только из главного потока.
-    override var wantsExtendedDynamicRangeContent: Bool {
-        get { super.wantsExtendedDynamicRangeContent }
-        set {
-            if Thread.isMainThread {
-                super.wantsExtendedDynamicRangeContent = newValue
-            } else {
-                DispatchQueue.main.sync { super.wantsExtendedDynamicRangeContent = newValue }
-            }
-        }
-    }
 }
 
 final class MPVVideoView: UIView {
