@@ -371,10 +371,12 @@ final class PlayerModel: ObservableObject {
         }
 
         let start = startAt > 1 ? String(format: "%.1f", startAt) : "none"
+        // Ссылки на встроенный TorrServer — мимо прокси для Lampa, сразу на сам сервер.
+        let url = TorrServerManager.directURL(item.url)
         onQueue { [weak self] h in
             self?.pendingSub = item.sub
             Self.qSet(h, "start", start)
-            Self.qCommand(h, ["loadfile", item.url, "replace"])
+            Self.qCommand(h, ["loadfile", url, "replace"])
         }
     }
 

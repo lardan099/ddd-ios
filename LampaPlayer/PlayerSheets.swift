@@ -116,6 +116,11 @@ struct TechSheet: View {
                     }
                     Button(showServerLog ? "Скрыть лог TorrServer" : "Показать лог TorrServer") { showServerLog.toggle() }
                     if showServerLog {
+                        Text("web.log").font(.caption.bold())
+                        Text(TorrServerManager.shared.webLogTail(maxBytes: 8 * 1024))
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                        Text("torrserver.log").font(.caption.bold())
                         Text(TorrServerManager.shared.serverLogTail(maxBytes: 16 * 1024))
                             .font(.caption2.monospaced())
                             .textSelection(.enabled)
@@ -170,5 +175,49 @@ struct TechSheet: View {
         lines.append("## Лог mpv")
         lines.append(contentsOf: model.log)
         return lines.joined(separator: "\n")
+    }
+}
+
+/// Журнал встроенного TorrServer: что запрашивала Lampa через прокси и что ответил сервер.
+struct TorrServerLogView: View {
+    @ObservedObject private var torr = TorrServerManager.shared
+    @State private var webLog = ""
+    @State private var copied = false
+
+    var body: some View {
+        List {
+            Section {
+                if torr.log.isEmpty {
+                    Text("Пусто. Откройте Lampa и выберите торрент — запросы появятся здесь.")
+                        .foregroundColor(.secondary)
+                }
+                ForEach(Array(torr.log.reversed().enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.caption2.monospaced())
+                        .foregroundColor(line.contains("← HTTP/1.1 4") || line.contains("← HTTP/1.1 5") ? .red : .primary)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("Запросы и события (новые сверху)")
+            } footer: {
+                Text("«→» — запрос Lampa (в скобках её адрес), «←» — ответ TorrServer. 403 Banned означает блокировку по адресу Lampa — её снимает прокси.")
+            }
+
+            Section("web.log TorrServer") {
+                Text(webLog.isEmpty ? "пусто" : webLog)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+        }
+        .navigationTitle("Журнал TorrServer")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(copied ? "Скопировано" : "Скопировать") {
+                    UIPasteboard.general.string = (torr.log + ["", "web.log:", webLog]).joined(separator: "\n")
+                    copied = true
+                }
+            }
+        }
+        .onAppear { webLog = torr.webLogTail(maxBytes: 8 * 1024) }
     }
 }

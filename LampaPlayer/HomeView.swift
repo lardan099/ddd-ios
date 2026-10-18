@@ -102,6 +102,19 @@ struct HomeView: View {
                         } label: {
                             Label("Скопировать адрес", systemImage: "doc.on.doc")
                         }
+                        HStack {
+                            Button("Проверить") { torr.selfTest() }
+                                .buttonStyle(.borderless)
+                                .disabled(!torr.running)
+                            Spacer()
+                            if let result = torr.selfTestResult {
+                                Text(result)
+                                    .font(.footnote)
+                                    .foregroundColor(result.hasPrefix("Отвечает") ? .green : .secondary)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                        NavigationLink("Журнал запросов Lampa") { TorrServerLogView() }
                         Toggle("Работать в фоне", isOn: $torrKeepAlive)
                         Button {
                             if let url = URL(string: TorrServerManager.address) { UIApplication.shared.open(url) }
