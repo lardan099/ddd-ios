@@ -146,6 +146,8 @@ final class PlayerModel: ObservableObject {
     private var toastWork: DispatchWorkItem?
     private var pip: PiPController?
     private var statusObservation: NSKeyValueObservation?
+    private var remote: RemoteControls?
+    private var wasPlayingBeforeInterruption = false
     private var decoderResets = 0
 
     // Только очередь mpv.
@@ -271,6 +273,7 @@ final class PlayerModel: ObservableObject {
             pip?.setAutoStart(AppSettings.autoPiP)
         }
 
+        remote = RemoteControls(model: self)
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
         play(index: index)
         scheduleHide()
@@ -288,6 +291,8 @@ final class PlayerModel: ObservableObject {
         statusObservation = nil
         pip?.invalidate()
         pip = nil
+        remote?.invalidate()
+        remote = nil
         // mpv держит слой без retain и шлёт ему кадры, пока не остановится. Держим self (и слой)
         // до конца terminate_destroy, а отпускаем в главном потоке — слой из дерева нельзя рушить в чужом.
         queue.async { [self] in
@@ -391,6 +396,36 @@ final class PlayerModel: ObservableObject {
         setFlag("pause", value)
         paused = value
         pip?.update(position: position, rate: value ? 0 : playbackSpeed)
+        updateNowPlaying(force: true)
+    }
+
+    // MARK: - Пульт (наушники, экран блокировки)
+
+    func remotePlay(_ playing: Bool) {
+        guard alive, playing == paused else { return }
+        setPaused(!playing)
+        showToast(playing ? "Воспроизведение" : "Пауза")
+    }
+
+    func interruptionBegan() {
+        guard alive else { return }
+        wasPlayingBeforeInterruption = !paused
+        if !paused { setPaused(true) }
+    }
+
+    func interruptionEnded(resume: Bool) {
+        guard alive else { return }
+        if resume && wasPlayingBeforeInterruption {
+            try? AVAudioSession.sharedInstance().setActive(true)
+            setPaused(false)
+        }
+        wasPlayingBeforeInterruption = false
+    }
+
+    private func updateNowPlaying(force: Bool = false) {
+        let subtitle = items.count > 1 ? "Серия \(index + 1) из \(items.count)" : nil
+        remote?.update(title: current.displayTitle, subtitle: subtitle, position: position,
+                       duration: duration, rate: paused || loading ? 0 : playbackSpeed, force: force)
     }
 
     func seek(to seconds: Double) {
@@ -572,6 +607,7 @@ final class PlayerModel: ObservableObject {
             if text != speedText { speedText = text }
         }
         pip?.update(position: position, rate: paused ? 0 : playbackSpeed)
+        updateNowPlaying()
 
         ticks += 1
         if ticks % 10 == 0 { saveProgress() }
@@ -682,6 +718,7 @@ final class PlayerModel: ObservableObject {
         if let loaded, loaded > 0 { duration = loaded }
         publishTracks(tracks)
         applyRememberedTracks()
+        updateNowPlaying(force: true)
         HistoryStore.record(items: items, index: index)
         if resumeOffer != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.resumeOffer = nil }
