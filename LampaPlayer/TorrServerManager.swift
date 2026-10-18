@@ -139,7 +139,8 @@ final class TorrServerManager: ObservableObject {
         for host in ["127.0.0.1", "localhost"] {
             let prefix = "http://\(host):\(port)/"
             if url.hasPrefix(prefix) {
-                return "http://127.0.0.1:\(internalPort)/" + url.dropFirst(prefix.count)
+                // «…:8090//stream/…» (адрес в Lampa со слэшем на конце) — лишние слэши TorrServer не прощает.
+                return "http://127.0.0.1:\(internalPort)/" + url.dropFirst(prefix.count).drop(while: { $0 == "/" })
             }
         }
         return url

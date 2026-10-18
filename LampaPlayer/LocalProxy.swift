@@ -198,7 +198,7 @@ private struct RequestRewriter {
                 break
             }
             var lines = text.components(separatedBy: "\r\n")
-            let requestLine = lines.isEmpty ? "" : lines.removeFirst()
+            let requestLine = Self.collapseLeadingSlashes(lines.isEmpty ? "" : lines.removeFirst())
             var kept = [requestLine]
             var origin: String?
             var length = 0
@@ -238,6 +238,15 @@ private struct RequestRewriter {
             bodyRemaining = length
         }
         return out
+    }
+
+    /// Если в Lampa адрес TorrServer записан со слэшем на конце (http://127.0.0.1:8090/), она шлёт
+    /// «//settings», «//stream/…», а TorrServer на такие пути отвечает 404. Схлопываем «//…» в «/…».
+    private static func collapseLeadingSlashes(_ requestLine: String) -> String {
+        let parts = requestLine.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[1].hasPrefix("//") else { return requestLine }
+        let path = "/" + parts[1].drop(while: { $0 == "/" })
+        return "\(parts[0]) \(path) \(parts[2])"
     }
 
     /// Ссылки на поток бывают длинными (magnet в query) — в лог хватит начала.
