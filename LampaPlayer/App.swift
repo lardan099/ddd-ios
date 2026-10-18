@@ -9,17 +9,28 @@ struct LampaPlayerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
+            ZStack {
                 if router.showLampa {
                     LampaScreen()
                 } else {
                     HomeView()
                 }
+                // Плеер свёрнут в картинку в картинке: видеослой живёт здесь, невидимо, пока идёт PiP.
+                if let session = router.session, !router.playerVisible {
+                    MPVVideoContainer(view: session.videoView)
+                        .frame(width: 2, height: 2)
+                        .opacity(0.01)
+                        .allowsHitTesting(false)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
             }
             .environmentObject(router)
             .onOpenURL { router.open($0) }
-            .fullScreenCover(item: $router.request) { request in
-                PlayerView(request: request)
+            .fullScreenCover(isPresented: $router.playerVisible) {
+                if let session = router.session {
+                    PlayerView(model: session)
+                        .environmentObject(router)
+                }
             }
             .alert("Не получилось открыть ссылку", isPresented: $router.showParseError) {
                 Button("OK", role: .cancel) {}
@@ -36,7 +47,10 @@ struct LampaPlayerApp: App {
 }
 
 final class Router: ObservableObject {
-    @Published var request: PlaybackRequest?
+    /// Текущая сессия плеера. Живёт отдельно от полноэкранного экрана — переживает сворачивание в PiP.
+    @Published private(set) var session: PlayerModel?
+    /// Полноэкранный плеер показан.
+    @Published var playerVisible = false
     @Published var showParseError = false
     @Published private(set) var lastBadURL: String?
     /// Главный экран — встроенная Lampa (иначе — экран плеера с историей и настройками).
@@ -45,6 +59,8 @@ final class Router: ObservableObject {
     @Published var showSettings = false
     @Published var showWebAlertFlag = false
     @Published private(set) var webAlertText = ""
+
+    private var restoringFromPiP = false
 
     func open(_ url: URL) {
         guard let parsed = LaunchParser.parse(url) else {
@@ -71,15 +87,66 @@ final class Router: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.present(newRequest) }
             return
         }
-        if request == nil {
-            request = newRequest
+        guard let old = session else {
+            startSession(newRequest)
             return
         }
-        // Плеер уже открыт (Lampa прислала новую серию) — закрываем старый и открываем заново.
-        request = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.request = newRequest
+        // Уже что-то играет (открыт плеер или свёрнут в PiP) — заканчиваем и открываем новое.
+        let wasVisible = playerVisible
+        old.collapsed = false
+        if wasVisible {
+            playerVisible = false // onDisappear плеера сам закончит сессию
+        } else {
+            endSession(old)
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wasVisible ? 0.6 : 0.2)) { [weak self] in
+            self?.startSession(newRequest)
+        }
+    }
+
+    private func startSession(_ request: PlaybackRequest) {
+        let model = PlayerModel(request: request)
+        model.onPiPActiveChanged = { [weak self, weak model] active in
+            guard let self, let model, self.session === model else { return }
+            if active {
+                self.collapse(model)
+            } else {
+                // Крестик в окне PiP, пока плеер свёрнут, — конец просмотра. «Развернуть» сюда не попадает.
+                if model.collapsed && !self.restoringFromPiP { self.endSession(model) }
+                self.restoringFromPiP = false
+            }
+        }
+        model.onPiPRestore = { [weak self, weak model] completion in
+            guard let self, let model, self.session === model else { return completion(false) }
+            self.restoringFromPiP = true
+            model.collapsed = false
+            self.playerVisible = true
+            // Даём полноэкранному плееру появиться, чтобы PiP «влетел» обратно в него.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { completion(true) }
+        }
+        session = model
+        playerVisible = true
+    }
+
+    /// PiP включился — убираем полноэкранный плеер, под ним Lampa. Видео идёт в окошке.
+    private func collapse(_ model: PlayerModel) {
+        guard playerVisible else { return }
+        model.collapsed = true
+        playerVisible = false
+    }
+
+    /// Конец просмотра: останавливаем mpv, отпускаем звук, ставим отметки в Lampa.
+    func endSession(_ model: PlayerModel) {
+        guard session === model else {
+            model.shutdown()
+            return
+        }
+        session = nil
+        model.collapsed = false
+        model.shutdown()
+        AudioSession.deactivate()
+        TorrServerManager.shared.playerActive = false
+        NotificationCenter.default.post(name: .lampaPlayerDidClose, object: nil)
     }
 }
 

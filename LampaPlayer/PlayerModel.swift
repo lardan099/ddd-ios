@@ -123,6 +123,12 @@ final class PlayerModel: ObservableObject {
     let clock = PlaybackClock()
     let thumbnails = ThumbnailProvider()
     let successURL: String?
+    /// Плеер свёрнут в картинку в картинке: полноэкранного экрана нет, а воспроизведение идёт.
+    var collapsed = false
+    /// Router следит за PiP: старт — свернуть плеер, стоп крестиком — закончить сессию.
+    var onPiPActiveChanged: ((Bool) -> Void)?
+    /// Кнопка «развернуть» в окне PiP.
+    var onPiPRestore: ((@escaping (Bool) -> Void) -> Void)?
     private(set) var log: [String] = []
 
     var position: Double {
@@ -317,6 +323,10 @@ final class PlayerModel: ObservableObject {
         toastWork?.cancel()
         statusObservation?.invalidate()
         statusObservation = nil
+        // Окно PiP этой сессии закрываем явно (например, открыли другое видео, пока это шло в PiP).
+        if pip?.isActive == true { pip?.stop() }
+        onPiPActiveChanged = nil
+        onPiPRestore = nil
         pip?.invalidate()
         pip = nil
         remote?.invalidate()
@@ -1163,6 +1173,7 @@ final class PlayerModel: ObservableObject {
 extension PlayerModel: PiPControllerDelegate {
     func pipDidChangeActive(_ active: Bool) {
         pipActive = active
+        onPiPActiveChanged?(active)
     }
 
     func pipSetPlaying(_ playing: Bool) {
@@ -1179,6 +1190,10 @@ extension PlayerModel: PiPControllerDelegate {
     var pipDuration: Double { duration }
 
     func pipRestoreUserInterface(_ completion: @escaping (Bool) -> Void) {
-        completion(true)
+        if let onPiPRestore {
+            onPiPRestore(completion)
+        } else {
+            completion(true)
+        }
     }
 }

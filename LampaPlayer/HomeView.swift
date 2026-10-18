@@ -255,8 +255,8 @@ struct HomeView: View {
         }
         .navigationViewStyle(.stack)
         .onAppear(perform: reload)
-        .onChange(of: router.request) { request in
-            if request == nil { reload() }
+        .onChange(of: router.playerVisible) { visible in
+            if !visible { reload() }
         }
     }
 

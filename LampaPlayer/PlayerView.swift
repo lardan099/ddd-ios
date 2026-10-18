@@ -3,10 +3,32 @@ import UIKit
 import MediaPlayer
 import AVFoundation
 
+/// Слот для видеослоя. Сам MPVVideoView переезжает между слотами: полноэкранный плеер ↔ невидимый
+/// держатель в корне приложения, пока идёт картинка в картинке (слою PiP нужно оставаться в окне).
 struct MPVVideoContainer: UIViewRepresentable {
     let view: MPVVideoView
-    func makeUIView(context: Context) -> MPVVideoView { view }
-    func updateUIView(_ uiView: MPVVideoView, context: Context) {}
+    func makeUIView(context: Context) -> VideoSlot {
+        let slot = VideoSlot()
+        slot.adopt(view)
+        return slot
+    }
+    func updateUIView(_ uiView: VideoSlot, context: Context) {}
+}
+
+final class VideoSlot: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func adopt(_ video: UIView) {
+        video.removeFromSuperview()
+        video.frame = bounds
+        video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(video)
+    }
 }
 
 /// Системная громкость. Публичного API нет, поэтому двигаем ползунок скрытого MPVolumeView.
@@ -85,7 +107,8 @@ private enum DragMode {
 }
 
 struct PlayerView: View {
-    @StateObject private var model: PlayerModel
+    @ObservedObject var model: PlayerModel
+    @EnvironmentObject private var router: Router
     @Environment(\.dismiss) private var dismiss
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var sheet: PlayerSheet?
@@ -102,8 +125,8 @@ struct PlayerView: View {
     /// Сколько секунд перемотки даёт свайп на всю ширину экрана.
     private let seekSpan: Double = 120
 
-    init(request: PlaybackRequest) {
-        _model = StateObject(wrappedValue: PlayerModel(request: request))
+    init(model: PlayerModel) {
+        self.model = model
     }
 
     private var isPortrait: Bool { verticalSizeClass == .regular }
@@ -219,15 +242,13 @@ struct PlayerView: View {
             model.start()
         }
         .onDisappear {
-            model.shutdown()
             UIApplication.shared.isIdleTimerDisabled = false
             if let originalBrightness { UIScreen.main.brightness = originalBrightness }
-            TorrServerManager.shared.playerActive = false
-            AudioSession.deactivate()
             Orientation.lock(.all)
+            // Свернули в картинку в картинке — видео продолжает идти, сессия жива.
+            guard !model.collapsed else { return }
             openSuccessCallback()
-            // Встроенная Lampa сразу ставит отметки просмотра.
-            NotificationCenter.default.post(name: .lampaPlayerDidClose, object: nil)
+            router.endSession(model)
         }
         .onChange(of: model.finished) { finished in
             if finished { dismiss() }
