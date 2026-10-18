@@ -205,6 +205,9 @@ final class PlayerModel: ObservableObject {
             ("hwdec-codecs", "all"),
             ("hwdec-software-fallback", "yes"),
             ("ao", "audiounit"),
+            // Без этого ao_audiounit ставит сессии MixWithOthers — тогда iOS не делает нас «Сейчас играет»,
+            // и кнопки наушников уходят в Музыку.
+            ("audio-exclusive", "yes"),
             ("video-rotate", "no"),
             ("idle", "yes"),
             ("keep-open", "no"),
@@ -402,6 +405,10 @@ final class PlayerModel: ObservableObject {
     }
 
     // MARK: - Пульт (наушники, экран блокировки)
+
+    func logRemote(_ command: String) {
+        appendLog("Пульт: \(command)")
+    }
 
     func remotePlay(_ playing: Bool) {
         guard alive, playing == paused else { return }

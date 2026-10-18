@@ -24,11 +24,11 @@ final class RemoteControls {
     private func register() {
         let center = MPRemoteCommandCenter.shared()
 
-        add(center.playCommand) { m, _ in m.remotePlay(true); return .success }
-        add(center.pauseCommand) { m, _ in m.remotePlay(false); return .success }
-        add(center.togglePlayPauseCommand) { m, _ in m.togglePause(); return .success }
+        add(center.playCommand, "плей") { m, _ in m.remotePlay(true); return .success }
+        add(center.pauseCommand, "пауза") { m, _ in m.remotePlay(false); return .success }
+        add(center.togglePlayPauseCommand, "плей/пауза") { m, _ in m.togglePause(); return .success }
 
-        add(center.nextTrackCommand) { m, _ in
+        add(center.nextTrackCommand, "следующий трек") { m, _ in
             if m.items.count > 1 {
                 guard m.hasNext else { return .noSuchContent }
                 m.next()
@@ -37,7 +37,7 @@ final class RemoteControls {
             }
             return .success
         }
-        add(center.previousTrackCommand) { m, _ in
+        add(center.previousTrackCommand, "предыдущий трек") { m, _ in
             if m.items.count > 1 {
                 guard m.hasPrevious else { return .noSuchContent }
                 m.previous()
@@ -49,40 +49,41 @@ final class RemoteControls {
 
         center.skipForwardCommand.preferredIntervals = [10]
         center.skipBackwardCommand.preferredIntervals = [10]
-        add(center.skipForwardCommand) { m, event in
+        add(center.skipForwardCommand, "вперёд") { m, event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
             m.seek(by: interval)
             return .success
         }
-        add(center.skipBackwardCommand) { m, event in
+        add(center.skipBackwardCommand, "назад") { m, event in
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
             m.seek(by: -interval)
             return .success
         }
 
         // Зажатие кнопки на некоторых наушниках: перематываем рывком при начале зажатия.
-        add(center.seekForwardCommand) { m, event in
+        add(center.seekForwardCommand, "перемотка вперёд") { m, event in
             if (event as? MPSeekCommandEvent)?.type == .beginSeeking { m.seek(by: 30) }
             return .success
         }
-        add(center.seekBackwardCommand) { m, event in
+        add(center.seekBackwardCommand, "перемотка назад") { m, event in
             if (event as? MPSeekCommandEvent)?.type == .beginSeeking { m.seek(by: -30) }
             return .success
         }
 
         // Ползунок на экране блокировки и в Пункте управления.
-        add(center.changePlaybackPositionCommand) { m, event in
+        add(center.changePlaybackPositionCommand, "ползунок") { m, event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             m.seek(to: event.positionTime)
             return .success
         }
     }
 
-    private func add(_ command: MPRemoteCommand,
+    private func add(_ command: MPRemoteCommand, _ name: String,
                      _ handler: @escaping (PlayerModel, MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) {
         command.isEnabled = true
         let target = command.addTarget { [weak self] event in
             guard let model = self?.model else { return .noActionableNowPlayingItem }
+            model.logRemote(name)
             return handler(model, event)
         }
         targets.append((command, target))
