@@ -1,6 +1,6 @@
 import Foundation
 import UIKit
-import Libmpv
+import MPVKit
 
 /// CAMetalLayer с обходами из демо MPVKit.
 final class MetalLayer: CAMetalLayer {

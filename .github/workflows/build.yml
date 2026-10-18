@@ -19,6 +19,15 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
+      - name: Cache vendor frameworks
+        uses: actions/cache@v4
+        with:
+          path: Vendor
+          key: vendor-${{ hashFiles('tools/fetch-vendor.sh') }}
+
+      - name: Fetch TorrServerKit
+        run: bash tools/fetch-vendor.sh
+
       - name: Generate project
         run: |
           brew install xcodegen
@@ -28,7 +37,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/SourcePackages
-          key: spm-${{ hashFiles('project.yml') }}
+          key: spm-${{ hashFiles('project.yml', 'Packages/**/Package.swift') }}
 
       - name: Build
         run: |
@@ -53,6 +62,17 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/LampaPlayer.app Payload/
+          # Статические фреймворки уже вшиты в бинарник; если Xcode всё же положил их во Frameworks,
+          # iOS откажется ставить приложение («не динамическая библиотека»).
+          for fw in Payload/LampaPlayer.app/Frameworks/*.framework; do
+            [ -d "$fw" ] || continue
+            bin="$fw/$(basename "$fw" .framework)"
+            if [ -f "$bin" ] && file "$bin" | grep -q "ar archive"; then
+              echo "Removing static framework $fw"
+              rm -rf "$fw"
+            fi
+          done
+          ls Payload/LampaPlayer.app/Frameworks 2>/dev/null || echo "no Frameworks dir"
           PLIST=Payload/LampaPlayer.app/Info.plist
           VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$PLIST")
           BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$PLIST")

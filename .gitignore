@@ -4,3 +4,4 @@ build/
 Payload/
 *.ipa
 .DS_Store
+Vendor/

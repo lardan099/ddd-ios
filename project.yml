@@ -6,13 +6,13 @@ options:
   createIntermediateGroups: true
 
 packages:
-  MPVKit:
-    url: https://github.com/mpvkit/MPVKit.git
-    exactVersion: 1.0.0
+  # libmpv с vo=avfoundation (PiP, HDR) — см. Packages/MPVKitAV/Package.swift
+  MPVKitAV:
+    path: Packages/MPVKitAV
 
 settings:
   base:
-    MARKETING_VERSION: "0.2.0"
+    MARKETING_VERSION: "0.3.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
 
@@ -30,8 +30,14 @@ targets:
         type: folder
         buildPhase: resources
     dependencies:
-      - package: MPVKit
-        product: MPVKit
+      - package: MPVKitAV
+        product: MPVKitAV
+      # Встроенный TorrServer (статическая библиотека gomobile). Кладётся tools/fetch-vendor.sh.
+      - framework: Vendor/TorrServerKit.xcframework
+        embed: false
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: libresolv.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lampaplayer.app
@@ -62,6 +68,8 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: Нужно, чтобы смотреть видео с TorrServer в домашней сети.
+        # Звук в фоне: картинка в картинке и встроенный TorrServer, пока Lampa открыта в Safari.
+        UIBackgroundModes: [audio]
         CFBundleURLTypes:
           # Lampa на iPhone умеет отдавать видео только в известные плееры.
           # Перехватываем их схемы: infuse:// (плейлист, позиция, субтитры) и senplayer:// (одна ссылка).
