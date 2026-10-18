@@ -43,6 +43,7 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build > build.log 2>&1 && STATUS=0 || STATUS=$?
           grep -E "error:|BUILD (SUCCEEDED|FAILED)" build.log | sort -u | head -100 || true
           if [ "$STATUS" -ne 0 ]; then tail -40 build.log; exit "$STATUS"; fi
@@ -52,13 +53,18 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/LampaPlayer.app Payload/
-          zip -qry LampaPlayer-unsigned.ipa Payload
-          ls -lh LampaPlayer-unsigned.ipa
+          PLIST=Payload/LampaPlayer.app/Info.plist
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$PLIST")
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$PLIST")
+          NAME="LampaPlayer-$VERSION-$BUILD-unsigned.ipa"
+          zip -qry "$NAME" Payload
+          ls -lh "$NAME"
+          echo "IPA_NAME=$NAME" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
           name: LampaPlayer-unsigned-ipa
-          path: LampaPlayer-unsigned.ipa
+          path: ${{ env.IPA_NAME }}
 
       - uses: actions/upload-artifact@v4
         if: failure()

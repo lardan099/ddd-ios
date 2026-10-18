@@ -88,6 +88,10 @@ struct HomeView: View {
                     .foregroundColor(.secondary)
                 } header: {
                     Text("Как подключить к Lampa")
+                } footer: {
+                    Text("Версия \(Self.appVersion)")
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 12)
                 }
             }
             .navigationTitle("Lampa Player")
@@ -138,6 +142,13 @@ struct HomeView: View {
 
     private func resume(_ entry: HistoryEntry) {
         router.present(PlaybackRequest(items: entry.items, startIndex: entry.index, source: "history"))
+    }
+
+    static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     private func reload() {
