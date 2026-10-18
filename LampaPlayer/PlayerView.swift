@@ -161,6 +161,28 @@ struct PlayerView: View {
                 .padding(.leading, 24).padding(.bottom, 130)
             }
 
+            if let segment = model.activeSegment, !locked, model.errorMessage == nil {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button { model.skipActiveSegment() } label: {
+                            Label(segment.kind == .ad ? "Пропустить рекламу" : "Пропустить",
+                                  systemImage: "forward.end.fill")
+                                .font(.headline)
+                                .padding(.horizontal, 18).padding(.vertical, 12)
+                                .background(Color.white.opacity(0.92))
+                                .foregroundColor(.black)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.trailing, 24)
+                .padding(.bottom, model.controlsVisible ? 130 : 40)
+                .transition(.opacity)
+            }
+
             if locked && showUnlock {
                 unlockButton
             }
@@ -269,6 +291,7 @@ struct PlayerView: View {
             let target = min(max(start + Double(drag.translation.width) / Double(max(size.width, 1)) * seekSpan, 0), duration)
             model.clock.scrubTime = target
             seekPreview = (target, target - start)
+            model.thumbnails.request(time: target)
         case .none:
             break
         }
@@ -348,6 +371,7 @@ struct PlayerView: View {
     private func seekPreviewView(_ preview: (target: Double, delta: Double)) -> some View {
         let sign = preview.delta >= 0 ? "+" : "−"
         return VStack(spacing: 4) {
+            ThumbnailImage(provider: model.thumbnails, width: 200)
             Text(PlayerModel.formatTime(preview.target))
                 .font(.system(size: 34, weight: .semibold).monospacedDigit())
             Text(sign + PlayerModel.formatTime(abs(preview.delta)))
@@ -375,7 +399,7 @@ struct PlayerView: View {
                 centerButtons
                 Spacer(minLength: 0)
                 actionRow
-                BottomBar(clock: model.clock) { model.seek(to: $0) }
+                BottomBar(clock: model.clock, thumbnails: model.thumbnails) { model.seek(to: $0) }
             }
             .padding(.horizontal, 16)
             .padding(.top, isPortrait ? 8 : 20)
@@ -443,6 +467,19 @@ struct PlayerView: View {
             Button { model.toggleFill() } label: {
                 Label(model.fill ? "Вписать в экран" : "Заполнить экран",
                       systemImage: model.fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+            }
+            if !model.clock.segments.isEmpty || model.current.segments != nil {
+                Section("Пропуск заставок и рекламы") {
+                    ForEach(AppSettings.SkipMode.allCases, id: \.self) { mode in
+                        Button { AppSettings.skipMode = mode; model.showToast(mode.title) } label: {
+                            if AppSettings.skipMode == mode {
+                                Label(mode.title, systemImage: "checkmark")
+                            } else {
+                                Text(mode.title)
+                            }
+                        }
+                    }
+                }
             }
             Button { sheet = .tuning } label: {
                 Label("Задержка и размер субтитров", systemImage: "slider.horizontal.3")
@@ -564,11 +601,13 @@ struct PlayerView: View {
 
 struct BottomBar: View {
     @ObservedObject var clock: PlaybackClock
+    let thumbnails: ThumbnailProvider
     let onSeek: (Double) -> Void
 
     var body: some View {
         VStack(spacing: 6) {
             Scrubber(position: clock.position, duration: clock.duration, cacheEnd: clock.cacheEnd,
+                     segments: clock.segments, thumbnails: thumbnails,
                      scrubTime: $clock.scrubTime, onCommit: onSeek)
             HStack {
                 Text(PlayerModel.formatTime(clock.scrubTime ?? clock.position))
@@ -580,6 +619,9 @@ struct BottomBar: View {
             .font(.caption.monospacedDigit())
             .foregroundColor(.white.opacity(0.85))
         }
+        .onChange(of: clock.scrubTime) { time in
+            thumbnails.request(time: time)
+        }
     }
 }
 
@@ -587,6 +629,8 @@ struct Scrubber: View {
     let position: Double
     let duration: Double
     let cacheEnd: Double
+    var segments: [SkipRange] = []
+    var thumbnails: ThumbnailProvider?
     @Binding var scrubTime: Double?
     let onCommit: (Double) -> Void
 
@@ -602,10 +646,26 @@ struct Scrubber: View {
                 Capsule().fill(Color.white.opacity(0.25)).frame(height: 4)
                 Capsule().fill(Color.white.opacity(0.45)).frame(width: width * cached, height: 4)
                 Capsule().fill(Color.accentColor).frame(width: width * fraction, height: 4)
+                // Метки пропуска: заставки/титры — жёлтые, реклама — красная.
+                if duration > 0 {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                        let from = min(max(segment.start / duration, 0), 1)
+                        let to = min(max(segment.end / duration, 0), 1)
+                        Capsule()
+                            .fill(segment.kind == .ad ? Color.red.opacity(0.9) : Color.yellow.opacity(0.85))
+                            .frame(width: max(width * (to - from), 3), height: 4)
+                            .offset(x: width * from)
+                    }
+                }
                 Circle()
                     .fill(Color.white)
                     .frame(width: knob, height: knob)
                     .offset(x: width * fraction - knob / 2)
+                if scrubTime != nil, let thumbnails {
+                    ThumbnailImage(provider: thumbnails)
+                        .offset(x: min(max(width * fraction - 80, 0), max(width - 160, 0)), y: -70)
+                        .allowsHitTesting(false)
+                }
             }
             .frame(height: 30)
             .contentShape(Rectangle())

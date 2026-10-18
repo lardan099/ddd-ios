@@ -16,6 +16,8 @@ final class LocalProxy {
     private var listener: NWListener?
     /// Слушает ли сейчас порт. iOS может закрыть сокет, пока приложение было заморожено.
     private(set) var isListening = false
+    /// Слушатель создан (может ещё не быть .ready).
+    var isStarted: Bool { listener != nil }
     private var sessions: [ObjectIdentifier: ProxySession] = [:]
 
     init(port: UInt16, targetPort: UInt16) {
@@ -111,6 +113,10 @@ private final class ProxySession {
             guard let self, !self.closed else { return }
             if let data, !data.isEmpty {
                 let out = self.rewriter.feed(data) { [weak self] line in self?.log?(line) }
+                if let local = self.rewriter.takeLocalRequest() {
+                    self.respondLocally(local)
+                    return
+                }
                 self.upstream.send(content: out, completion: .contentProcessed { [weak self] sendError in
                     guard let self else { return }
                     if sendError != nil || isComplete { self.close(); return }
@@ -122,6 +128,12 @@ private final class ProxySession {
                 self.pumpRequests()
             }
         }
+    }
+
+    /// Запросы плагина Lampa к самому плееру (/lampaplayer/…) — отвечаем сами и закрываем соединение.
+    private func respondLocally(_ request: (method: String, target: String)) {
+        let response = LocalAPI.response(method: request.method, target: request.target, log: log)
+        client.send(content: response, completion: .contentProcessed { [weak self] _ in self?.close() })
     }
 
     /// TorrServer → клиент, как есть. Логируем строку статуса, если ответ начинается в этом куске.
@@ -162,7 +174,14 @@ private struct RequestRewriter {
     private var buffer = Data()
     private var bodyRemaining = 0
     private var passthrough = false
+    private var discardBody = false
+    private var localRequest: (method: String, target: String)?
     private static let headerEnd = Data("\r\n\r\n".utf8)
+
+    mutating func takeLocalRequest() -> (method: String, target: String)? {
+        defer { localRequest = nil }
+        return localRequest
+    }
 
     mutating func feed(_ data: Data, log: (String) -> Void) -> Data {
         if passthrough { return data }
@@ -172,7 +191,7 @@ private struct RequestRewriter {
         while !buffer.isEmpty {
             if bodyRemaining > 0 {
                 let n = min(bodyRemaining, buffer.count)
-                out.append(buffer.prefix(n))
+                if !discardBody { out.append(buffer.prefix(n)) }
                 buffer = Data(buffer.dropFirst(n))
                 bodyRemaining -= n
                 continue
@@ -224,6 +243,16 @@ private struct RequestRewriter {
                 }
                 kept.append(line)
             }
+
+            let requestParts = requestLine.split(separator: " ")
+            if requestParts.count >= 2, requestParts[1].hasPrefix(LocalAPI.prefix) {
+                // Свой API плеера: не пересылаем в TorrServer, тело (если есть) выкидываем.
+                if localRequest == nil { localRequest = (String(requestParts[0]), String(requestParts[1])) }
+                discardBody = length > 0
+                bodyRemaining = length
+                continue
+            }
+            discardBody = false
 
             log("→ \(Self.shorten(requestLine))" + (origin.map { "  [\($0)]" } ?? ""))
             out.append(Data((kept.joined(separator: "\r\n") + "\r\n\r\n").utf8))

@@ -78,6 +78,15 @@ final class PlaybackClock: ObservableObject {
     @Published var duration: Double = 0
     @Published var cacheEnd: Double = 0
     @Published var scrubTime: Double?
+    /// Метки пропуска текущей серии — рисуются на полосе перемотки.
+    @Published var segments: [SkipRange] = []
+}
+
+struct SkipRange: Hashable {
+    enum Kind: Hashable { case intro, ad }
+    let start: Double
+    let end: Double
+    let kind: Kind
 }
 
 /// Обёртка над libmpv + состояние для SwiftUI.
@@ -106,10 +115,12 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var audioDelay: Double = 0
     @Published private(set) var subDelay: Double = 0
     @Published private(set) var subScale: Double = AppSettings.subScale
+    @Published private(set) var activeSegment: SkipRange?
 
     let output: VideoOutput
     let videoView: MPVVideoView
     let clock = PlaybackClock()
+    let thumbnails = ThumbnailProvider()
     let successURL: String?
     private(set) var log: [String] = []
 
@@ -149,10 +160,11 @@ final class PlayerModel: ObservableObject {
     private var remote: RemoteControls?
     private var wasPlayingBeforeInterruption = false
     private var decoderResets = 0
+    private var skippedSegments: Set<SkipRange> = []
 
     // Только очередь mpv.
     private var destroyed = false
-    private var pendingSub: String?
+    private var pendingSubs: [SubtitleRef] = []
 
     /// Выбор озвучки/субтитров переносим на следующие серии.
     private struct TrackChoice { let title: String?; let lang: String?; let ordinal: Int; let off: Bool }
@@ -360,8 +372,11 @@ final class PlayerModel: ObservableObject {
         subTracks = []
         resumeOffer = nil
         decoderResets = 0
+        activeSegment = nil
+        clock.segments = []
 
         let item = items[newIndex]
+        thumbnails.load(item.thumbnails)
         var startAt = explicitStart ?? 0
         if explicitStart == nil {
             // Lampa не узнаёт наш прогресс, так что своя позиция свежее; её нет — берём позицию от Lampa.
@@ -377,7 +392,7 @@ final class PlayerModel: ObservableObject {
         // Ссылки на встроенный TorrServer — мимо прокси для Lampa, сразу на сам сервер.
         let url = TorrServerManager.directURL(item.url)
         onQueue { [weak self] h in
-            self?.pendingSub = item.sub
+            self?.pendingSubs = item.externalSubtitles
             Self.qSet(h, "start", start)
             Self.qCommand(h, ["loadfile", url, "replace"])
         }
@@ -606,7 +621,10 @@ final class PlayerModel: ObservableObject {
         tickInFlight = false
         guard alive else { return }
         if scrubTime == nil, let p = s.position { position = p }
-        if let d = s.duration, d > 0 { duration = d }
+        if let d = s.duration, d > 0, d != duration {
+            duration = d
+            if current.segments != nil { refreshSegments() }
+        }
         cacheEnd = s.cacheTime ?? 0
         if let p = s.paused, p != paused { paused = p }
         if let b = s.buffering, b != buffering { buffering = b }
@@ -617,6 +635,7 @@ final class PlayerModel: ObservableObject {
         }
         pip?.update(position: position, rate: paused ? 0 : playbackSpeed)
         updateNowPlaying()
+        updateActiveSegment()
 
         ticks += 1
         if ticks % 10 == 0 { saveProgress() }
@@ -630,6 +649,7 @@ final class PlayerModel: ObservableObject {
     private func saveProgress() {
         guard alive, !loading, duration > 0, position > 5 else { return }
         ResumeStore.store(position, duration: duration, for: current.resumeKey)
+        if let hash = current.lampaHash { LampaProgressStore.record(hash: hash, time: position, duration: duration) }
     }
 
     // MARK: - События mpv (очередь mpv)
@@ -649,11 +669,12 @@ final class PlayerModel: ObservableObject {
         switch event.event_id {
         case MPV_EVENT_FILE_LOADED:
             Self.qSet(mpv, "start", "none")
-            if let sub = pendingSub {
-                // Без заголовка mpv называет дорожку длинным URL.
-                Self.qCommand(mpv, ["sub-add", sub, "auto", "Из Lampa"])
+            // Внешние субтитры: с заголовком и языком, иначе mpv называет дорожку длинным URL.
+            for sub in pendingSubs {
+                let title = sub.label.isEmpty ? "Из Lampa" : sub.label
+                Self.qCommand(mpv, ["sub-add", sub.url, "auto", title, Self.languageCode(fromLabel: title)])
             }
-            pendingSub = nil
+            pendingSubs = []
             let duration = Self.qDouble(mpv, "duration")
             let tracks = readTracks()
             DispatchQueue.main.async { self.fileLoaded(duration: duration, tracks: tracks) }
@@ -727,6 +748,8 @@ final class PlayerModel: ObservableObject {
         if let loaded, loaded > 0 { duration = loaded }
         publishTracks(tracks)
         applyRememberedTracks()
+        autoSelectExternalSubtitles()
+        refreshSegments()
         updateNowPlaying(force: true)
         HistoryStore.record(items: items, index: index)
         if resumeOffer != nil {
@@ -744,7 +767,10 @@ final class PlayerModel: ObservableObject {
                 errorMessage = "Поток оборвался на \(Self.formatTime(position)). Нажмите «Повторить», чтобы продолжить."
                 return
             }
-            if duration > 0 { ResumeStore.store(duration, duration: duration, for: current.resumeKey) }
+            if duration > 0 {
+                ResumeStore.store(duration, duration: duration, for: current.resumeKey)
+                if let hash = current.lampaHash { LampaProgressStore.record(hash: hash, time: duration, duration: duration) }
+            }
             if hasNext {
                 play(index: index + 1)
             } else {
@@ -881,6 +907,96 @@ final class PlayerModel: ObservableObject {
                 set("sid", "\(track.id)")
             }
         }
+    }
+
+    /// Внешние субтитры mpv не выбирает сам (добавлены после автовыбора). Правило как у встроенных:
+    /// озвучка на нашем языке — только форсированные, иначе полные на нашем языке.
+    private func autoSelectExternalSubtitles() {
+        guard subChoice == nil, !subTracks.contains(where: { $0.selected }) else { return }
+        let external = subTracks.filter { $0.external }
+        guard !external.isEmpty else { return }
+
+        let preferred = LanguagePrefs.mpvList().split(separator: ",").map { String($0) }
+        func isPreferred(_ lang: String?) -> Bool {
+            guard let lang = lang?.lowercased() else { return false }
+            return preferred.contains(lang)
+        }
+        func isForced(_ track: MediaTrack) -> Bool {
+            track.forced || (track.title?.lowercased().contains("forced") ?? false)
+                || (track.title?.lowercased().contains("форс") ?? false)
+        }
+
+        let audioLang = audioTracks.first(where: { $0.selected })?.lang
+        let audioIsOurs = isPreferred(audioLang)
+        let ours = external.filter { isPreferred($0.lang) }
+        let pick = audioIsOurs ? ours.first(where: isForced) : (ours.first(where: { !isForced($0) }) ?? ours.first)
+        if let pick { set("sid", "\(pick.id)") }
+    }
+
+    /// «RUS - [FORCED]», «ENG», «ukr / Повні» → трёхбуквенный код языка для mpv.
+    static func languageCode(fromLabel label: String) -> String {
+        let lower = label.lowercased()
+        let table: [(String, [String])] = [
+            ("rus", ["rus", "рус", "russian"]), ("ukr", ["ukr", "укр", "ukrainian"]),
+            ("eng", ["eng", "англ", "english"]), ("bel", ["bel", "бел"]), ("kaz", ["kaz", "каз"]),
+            ("ger", ["ger", "deu", "нем", "german"]), ("fre", ["fre", "fra", "фра", "french"]),
+            ("spa", ["spa", "исп", "spanish"]), ("ita", ["ita", "ита", "italian"]), ("jpn", ["jpn", "япон", "japanese"]),
+            ("kor", ["kor", "кор", "korean"]), ("chi", ["chi", "zho", "кит", "chinese"]), ("heb", ["heb", "иврит"]),
+        ]
+        for (code, keys) in table where keys.contains(where: { lower.hasPrefix($0) || lower.contains(" \($0)") }) {
+            return code
+        }
+        return ""
+    }
+
+    // MARK: - Пропуск заставок и рекламы
+
+    /// Сегменты под фактическую длительность файла. Метки размечены по эталону duration_ms;
+    /// если наш файл длиннее, титры в конце сдвигаем к концу файла (как делает сама Lampa).
+    private func mappedSegments() -> [SkipRange] {
+        guard let segments = current.segments else { return [] }
+        let reference = segments.referenceDuration
+        let shift = (reference > 0 && duration > 0 && abs(duration - reference) > 2) ? duration - reference : 0
+        func map(_ pair: [Double], kind: SkipRange.Kind) -> SkipRange? {
+            guard pair.count == 2 else { return nil }
+            var start = pair[0], end = pair[1]
+            if shift > 0, reference > 0, start > reference * 0.55 { start += shift; end += shift }
+            if duration > 0 { end = min(end, duration) }
+            return end - start > 1 ? SkipRange(start: start, end: end, kind: kind) : nil
+        }
+        return (segments.skips.compactMap { map($0, kind: .intro) } + segments.ads.compactMap { map($0, kind: .ad) })
+            .sorted { $0.start < $1.start }
+    }
+
+    private func refreshSegments() {
+        let mapped = mappedSegments()
+        if mapped != clock.segments { clock.segments = mapped }
+        skippedSegments.removeAll()
+    }
+
+    /// Вызывается из тика: показать кнопку «Пропустить» или пропустить автоматически.
+    private func updateActiveSegment() {
+        let mode = AppSettings.skipMode
+        guard mode != .off, !loading, scrubTime == nil else {
+            if activeSegment != nil { activeSegment = nil }
+            return
+        }
+        let segment = clock.segments.first { position >= $0.start && position < $0.end - 1 }
+        if mode == .auto, let segment, !skippedSegments.contains(segment) {
+            skippedSegments.insert(segment)
+            seek(to: segment.end)
+            showToast(segment.kind == .ad ? "Реклама пропущена" : "Заставка пропущена")
+            if activeSegment != nil { activeSegment = nil }
+            return
+        }
+        if segment != activeSegment { activeSegment = segment }
+    }
+
+    func skipActiveSegment() {
+        guard let segment = activeSegment else { return }
+        skippedSegments.insert(segment)
+        activeSegment = nil
+        seek(to: segment.end)
     }
 
     // MARK: - Доступ к libmpv

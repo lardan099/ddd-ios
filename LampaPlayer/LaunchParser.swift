@@ -14,6 +14,8 @@ enum LaunchParser {
         switch scheme {
         case "http", "https":
             return PlaybackRequest(items: [PlayItem(url: url.absoluteString)], startIndex: 0, source: "link")
+        case "lampaplayer" where url.host?.lowercased() == "lampa":
+            return parseLampaPlugin(url)
         case "senplayer", "lampaplayer":
             return parseSingle(url, source: scheme)
         case "infuse":
@@ -48,6 +50,68 @@ enum LaunchParser {
         item.sub = value("sub")
         item.position = value("position").flatMap(Double.init)
         return PlaybackRequest(items: [item], startIndex: 0, source: source, successURL: value("x-success"))
+    }
+
+    /// lampaplayer://lampa?d=<base64url(JSON)> — от нашего плагина Lampa (plugin/lampa-player.js).
+    /// JSON: { v, i, c: {title, original, poster}, items: [{ u, t, s: [{u, l}], g: {a, s, d}, v, h, p }] }
+    private static func parseLampaPlugin(_ url: URL) -> PlaybackRequest? {
+        guard let encoded = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "d" })?.value else { return nil }
+        var b64 = encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawItems = root["items"] as? [[String: Any]] else { return nil }
+
+        func number(_ any: Any?) -> Double? {
+            if let d = any as? Double { return d }
+            if let i = any as? Int { return Double(i) }
+            if let s = any as? String { return Double(s) }
+            return nil
+        }
+        func ranges(_ any: Any?) -> [[Double]] {
+            (any as? [[Any]] ?? []).compactMap { pair in
+                guard pair.count == 2, let a = number(pair[0]), let b = number(pair[1]), b > a else { return nil }
+                return [a, b]
+            }
+        }
+
+        let items: [PlayItem] = rawItems.compactMap { raw in
+            guard let link = raw["u"] as? String, !link.isEmpty else { return nil }
+            var item = PlayItem(url: link)
+            if let title = raw["t"] as? String, !title.isEmpty { item.title = title }
+            if let subs = raw["s"] as? [[String: Any]] {
+                let refs = subs.compactMap { s -> SubtitleRef? in
+                    guard let u = s["u"] as? String, !u.isEmpty else { return nil }
+                    return SubtitleRef(url: u, label: (s["l"] as? String) ?? "")
+                }
+                if !refs.isEmpty { item.subs = refs }
+            }
+            if let seg = raw["g"] as? [String: Any] {
+                let segments = SkipSegments(ads: ranges(seg["a"]), skips: ranges(seg["s"]),
+                                            referenceDuration: (number(seg["d"]) ?? 0) / 1000)
+                if !segments.ads.isEmpty || !segments.skips.isEmpty { item.segments = segments }
+            }
+            if let thumbs = raw["v"] as? String, !thumbs.isEmpty { item.thumbnails = thumbs }
+            if let hash = raw["h"] as? String, !hash.isEmpty { item.lampaHash = hash }
+            else if let hash = number(raw["h"]) { item.lampaHash = String(Int64(hash)) }
+            if let position = number(raw["p"]), position > 0 { item.position = position }
+            return item
+        }
+        guard !items.isEmpty else { return nil }
+
+        // Название сериала из карточки + «Серия N» из плейлиста.
+        let show = ((root["c"] as? [String: Any])?["title"] as? String) ?? ""
+        let titled = items.map { item -> PlayItem in
+            var copy = item
+            if !show.isEmpty, let t = copy.title, !t.localizedCaseInsensitiveContains(show), t.count < 40 {
+                copy.title = show + " — " + t.trimmingCharacters(in: CharacterSet(charactersIn: " /"))
+            }
+            return copy
+        }
+
+        let start = min(max(Int(number(root["i"]) ?? 0), 0), titled.count - 1)
+        return PlaybackRequest(items: titled, startIndex: start, source: "lampa-plugin")
     }
 
     private static func parseInfuse(_ url: URL) -> PlaybackRequest? {

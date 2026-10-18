@@ -94,3 +94,65 @@ enum HistoryStore {
         }
     }
 }
+
+/// Позиции для отметок просмотра в Lampa. Плагин забирает их через GET /lampaplayer/progress
+/// и подтверждает через /lampaplayer/ack. Пишет плеер (главный поток), читает локальный сервер (своя очередь).
+enum LampaProgressStore {
+    private static let key = "lampaProgress"
+    private static let lock = NSLock()
+
+    struct Entry: Codable {
+        var time: Double
+        var duration: Double
+        var updated: Date
+    }
+
+    static func record(hash: String, time: Double, duration: Double) {
+        guard !hash.isEmpty, duration > 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        var dict = load()
+        dict[hash] = Entry(time: time, duration: duration, updated: Date())
+        // Не копим бесконечно: плагин мог не заходить месяцами.
+        if dict.count > 300 {
+            for (k, _) in dict.sorted(by: { $0.value.updated < $1.value.updated }).prefix(dict.count - 300) {
+                dict.removeValue(forKey: k)
+            }
+        }
+        save(dict)
+    }
+
+    /// JSON для плагина: [{h, t, d, pc}]
+    static func pendingJSON() -> Data {
+        lock.lock(); defer { lock.unlock() }
+        let list: [[String: Any]] = load().map { hash, e in
+            let percent = e.duration > 0 ? min(100, (e.time / e.duration * 100).rounded()) : 0
+            // Досмотрено почти до конца — для Lampa это 100%.
+            let final = (e.duration - e.time < 60 || percent >= 95) ? 100 : percent
+            return ["h": hash, "t": e.time.rounded(), "d": e.duration.rounded(), "pc": final]
+        }
+        return (try? JSONSerialization.data(withJSONObject: list)) ?? Data("[]".utf8)
+    }
+
+    static func acknowledge(_ hashes: [String]) {
+        guard !hashes.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        var dict = load()
+        hashes.forEach { dict.removeValue(forKey: $0) }
+        save(dict)
+    }
+
+    static var pendingCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return load().count
+    }
+
+    private static func load() -> [String: Entry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let dict = try? JSONDecoder().decode([String: Entry].self, from: data) else { return [:] }
+        return dict
+    }
+
+    private static func save(_ dict: [String: Entry]) {
+        if let data = try? JSONEncoder().encode(dict) { UserDefaults.standard.set(data, forKey: key) }
+    }
+}

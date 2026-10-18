@@ -1,5 +1,18 @@
 import Foundation
 
+struct SubtitleRef: Codable, Hashable {
+    var url: String
+    var label: String
+}
+
+/// Метки пропуска от балансера (через плагин Lampa): заставки/титры и реклама, в секундах.
+struct SkipSegments: Codable, Hashable {
+    var ads: [[Double]]
+    var skips: [[Double]]
+    /// Длительность файла, по которому размечали (duration_ms / 1000). 0 — неизвестна.
+    var referenceDuration: Double
+}
+
 struct PlayItem: Codable, Hashable {
     var url: String
     /// Имя файла / серии, как его передала Lampa (filename в infuse://).
@@ -8,6 +21,20 @@ struct PlayItem: Codable, Hashable {
     var sub: String?
     /// Позиция старта в секундах, которую передала Lampa.
     var position: Double?
+    /// Все внешние субтитры (только через плагин Lampa).
+    var subs: [SubtitleRef]?
+    var segments: SkipSegments?
+    /// WebVTT со спрайтами превью кадров.
+    var thumbnails: String?
+    /// Ключ отметки просмотра в Lampa (timeline hash) — по нему плагин ставит прогресс.
+    var lampaHash: String?
+
+    /// Все внешние субтитры: из плагина или единственные из infuse://.
+    var externalSubtitles: [SubtitleRef] {
+        if let subs, !subs.isEmpty { return subs }
+        if let sub, !sub.isEmpty { return [SubtitleRef(url: sub, label: "Из Lampa")] }
+        return []
+    }
 
     var displayTitle: String {
         if let title, !title.isEmpty { return Self.stripExtension(title) }
@@ -22,6 +49,8 @@ struct PlayItem: Codable, Hashable {
     /// Ключ для запоминания позиции. У TorrServer ссылка меняется (адрес сервера, &play/&preload),
     /// а пара hash+index — нет. У онлайн-источников ссылки протухают, поэтому опираемся на имя от Lampa.
     var resumeKey: String {
+        // Ключ отметки Lampa уникален для серии и не зависит от источника и ссылки.
+        if let lampaHash, !lampaHash.isEmpty { return "lh:\(lampaHash)" }
         if let comps = URLComponents(string: url), comps.path.contains("/stream"),
            let link = comps.queryItems?.first(where: { $0.name == "link" })?.value, !link.isEmpty {
             let index = comps.queryItems?.first(where: { $0.name == "index" })?.value ?? "1"
@@ -173,6 +202,23 @@ enum AppSettings {
     static let subScaleKey = "subScale"
     static let torrServerEnabledKey = "torrServerEnabled"
     static let torrServerKeepAliveKey = "torrServerKeepAlive"
+    static let skipModeKey = "skipMode"
+
+    enum SkipMode: String, CaseIterable {
+        case off, button, auto
+        var title: String {
+            switch self {
+            case .off: return "Выключено"
+            case .button: return "Кнопка «Пропустить»"
+            case .auto: return "Пропускать автоматически"
+            }
+        }
+    }
+
+    static var skipMode: SkipMode {
+        get { SkipMode(rawValue: UserDefaults.standard.string(forKey: skipModeKey) ?? "") ?? .button }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: skipModeKey) }
+    }
 
     static var hwdec: Bool {
         UserDefaults.standard.object(forKey: hwdecKey) as? Bool ?? true

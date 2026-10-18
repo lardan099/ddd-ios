@@ -46,9 +46,16 @@ final class TorrServerManager: ObservableObject {
         return dir
     }
 
-    /// Вызывается при запуске приложения: поднимает сервер, если он включён в настройках.
+    /// Вызывается при запуске приложения. Локальный сервер на :8090 работает всегда — через него плагин Lampa
+    /// забирает отметки просмотра; TorrServer за ним — только если включён в настройках.
     func startIfEnabled() {
+        startLocalServer()
         if AppSettings.torrServerEnabled { start() }
+    }
+
+    private func startLocalServer() {
+        guard !proxy.isStarted else { return }
+        if let error = proxy.start() { note("Локальный сервер :\(Self.port) не запустился: \(error)") }
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -70,7 +77,7 @@ final class TorrServerManager: ObservableObject {
                 guard let self else { return }
                 var problems: [String] = []
                 if !ok { problems.append(error) }
-                if ok, let proxyError = self.proxy.start() { problems.append("прокси :\(Self.port): \(proxyError)") }
+                if ok, !self.proxy.isStarted, let proxyError = self.proxy.start() { problems.append("прокси :\(Self.port): \(proxyError)") }
                 self.busy = false
                 self.running = ok
                 self.lastError = problems.isEmpty ? nil : problems.joined(separator: "; ")
@@ -86,7 +93,7 @@ final class TorrServerManager: ObservableObject {
         busy = true
         note("Остановка")
         keepAlive.stop()
-        proxy.stop()
+        // Прокси не трогаем: на нём же API плеера для плагина Lampa.
         queue.async { [weak self] in
             let error = TorrserverkitStopServer()
             let stillRunning = TorrserverkitIsRunning()
@@ -179,6 +186,13 @@ final class TorrServerManager: ObservableObject {
     // Пока Lampa открыта в Safari, наше приложение в фоне. Без звука iOS заморозит его через несколько
     // секунд, и TorrServer перестанет отвечать. Тихий звук держит процесс живым (режим audio в UIBackgroundModes).
     @objc private func willResignActive() {
+        // Даже без «Работать в фоне» просим у iOS ~30 секунд: этого хватает, чтобы Lampa
+        // после возврата в Safari успела забрать отметки просмотра.
+        if backgroundTask == .invalid {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "lampa-progress") { [weak self] in
+                self?.endBackgroundTask()
+            }
+        }
         guard running, AppSettings.torrServerKeepAlive, !playerActive else { return }
         if keepAlive.start() {
             note("Фон: держу сервер живым тихим звуком")
@@ -188,15 +202,24 @@ final class TorrServerManager: ObservableObject {
     }
 
     @objc private func didBecomeActive() {
+        endBackgroundTask()
         if keepAlive.isRunning {
             keepAlive.stop()
             note("Вернулись из фона")
         }
         refreshStatus()
-        if running, !busy, !proxy.isListening {
-            note("Прокси не слушает — перезапускаю")
+        if !busy, !proxy.isListening {
+            note("Локальный сервер не слушает — перезапускаю")
             if let error = proxy.start() { note("прокси: \(error)") }
         }
+    }
+
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
     }
 }
 

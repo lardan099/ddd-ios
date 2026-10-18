@@ -14,6 +14,11 @@ struct HomeView: View {
     @AppStorage(AppSettings.videoOutputKey) private var videoOutput = VideoOutput.avfoundation.rawValue
     @AppStorage(AppSettings.hdrKey) private var hdr = true
     @AppStorage(AppSettings.autoPiPKey) private var autoPiP = true
+    @AppStorage(AppSettings.skipModeKey) private var skipMode = AppSettings.SkipMode.button.rawValue
+    @State private var pluginCopied = false
+    @State private var pendingLampaMarks = 0
+
+    static let pluginURL = "https://lardan099.github.io/lampa-player-plugin/lampa-player.js"
 
     private struct LanguageOption: Identifiable {
         let id: String
@@ -65,6 +70,38 @@ struct HomeView: View {
                     } header: {
                         Text("Недавнее")
                     }
+                }
+
+                Section {
+                    HStack {
+                        Text(Self.pluginURL)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button {
+                            UIPasteboard.general.string = Self.pluginURL
+                            pluginCopied = true
+                        } label: {
+                            Image(systemName: pluginCopied ? "checkmark" : "doc.on.doc")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    Picker("Заставки и реклама", selection: $skipMode) {
+                        ForEach(AppSettings.SkipMode.allCases, id: \.rawValue) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                    if pendingLampaMarks > 0 {
+                        Text("Ждут отправки в Lampa: \(pendingLampaMarks) — откройте Lampa, плагин заберёт их сам.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("Плагин для Lampa")
+                } footer: {
+                    Text("Lampa → Настройки → Расширения → Добавить плагин → вставьте адрес выше. Тип плеера оставьте «Infuse». С плагином приходят все субтитры, метки пропуска заставок и рекламы, превью кадров, а отметки просмотра возвращаются в Lampa — и для онлайна, и для торрентов.")
                 }
 
                 Section {
@@ -234,5 +271,6 @@ struct HomeView: View {
 
     private func reload() {
         history = HistoryStore.load()
+        pendingLampaMarks = LampaProgressStore.pendingCount
     }
 }
