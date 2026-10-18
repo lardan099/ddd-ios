@@ -105,7 +105,7 @@ Lampa ставит выбранную серию первой и поворач�
 Нужен macOS с Xcode. На Windows собирать в GitHub Actions:
 
 1. Push в `main` или вручную: Actions → Build IPA → Run workflow. Коммиты с `[skip ci]` в сообщении сборку не запускают — так экономятся минуты Actions.
-2. Скачать артефакт `LampaPlayer-unsigned-ipa`, внутри `LampaPlayer-<версия>-<сборка>-unsigned.ipa`.
+2. Каждая успешная сборка публикуется в [Releases](https://github.com/lardan099/ddd-ios/releases) с тегом `v<версия>-<сборка>`: файл `LampaPlayer-<версия>-<сборка>-unsigned.ipa`, в описании текст коммита. Тот же IPA лежит в артефакте прогона `LampaPlayer-unsigned-ipa`.
 
 Номер сборки равен номеру прогона CI и растёт сам. Версию видно внизу экрана настроек.
 

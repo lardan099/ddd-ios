@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -80,11 +83,24 @@ jobs:
           zip -qry "$NAME" Payload
           ls -lh "$NAME"
           echo "IPA_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD=$BUILD" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
           name: LampaPlayer-unsigned-ipa
           path: ${{ env.IPA_NAME }}
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$APP_VERSION-$APP_BUILD"
+          gh release create "$TAG" "$IPA_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "$APP_VERSION ($APP_BUILD)" \
+            --notes "$(git log -1 --pretty=%B "$GITHUB_SHA" | grep -v '^Co-Authored-By')" \
+            --latest
 
       - uses: actions/upload-artifact@v4
         if: failure()
