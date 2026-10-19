@@ -16,7 +16,7 @@ enum Demo {
 
     /// Сцены плеера: с какой секунды фильма начать и что показать.
     private static let playerScenes: [String: (start: Double, action: Action)] = [
-        "player": (200, .none),
+        "player": (190, .none),
         "skip": (18, .none),
         "next": (690, .none),
         "tracks": (200, .sheet(.subtitles)),
@@ -25,7 +25,7 @@ enum Demo {
         "tech": (200, .sheet(.tech)),
         "lock": (330, .lock),
         "volume": (330, .volume),
-        "seek": (200, .seek),
+        "seek": (190, .seek),
         "portrait": (330, .none),
     ]
 
@@ -70,11 +70,11 @@ enum Demo {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8) { TorrServerManager.shared.selfTest() }
             }
         case "lampa-card":
-            // Открываем первую карточку на главной Lampa (её обработчик — событие hover:enter).
-            runInLampa(after: 15, "var c=document.querySelector('.card');if(c)$(c).trigger('hover:enter')")
+            // Карточка сериала («Игра престолов», TMDB 1399) — как будто её открыли с главной.
+            runInLampa(after: 15, "Lampa.Activity.push({url:'',component:'full',id:1399,method:'tv',source:'tmdb',card:{id:1399,name:'Игра престолов',source:'tmdb'}})")
         case "lampa-menu":
-            // Меню Lampa с пунктом «Lampa Player» от плагина.
-            runInLampa(after: 15, "var m=document.querySelector('.head__menu-icon');if(m){$(m).trigger('hover:enter');m.click()}")
+            // Меню Lampa с пунктом «Lampa Player» от плагина. Иконка меню открывает его по mousedown, а не click.
+            runInLampa(after: 15, "Lampa.Controller.toggle('menu')")
         case let s? where playerScene:
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 router.present(request(startAt: playerScenes[s]!.start))

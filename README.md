@@ -6,17 +6,59 @@ Lampa и свой плеер в одном приложении для iOS. Lamp
 
 Идея взята у [DDD Player](https://github.com/usmanec/dddplayer) для Android: плейлисты, внешние субтитры, все дорожки и автовыбор языка. 3D здесь нет.
 
-<p align="center">
-  <img src="docs/screenshots/lampa.jpg" width="220" alt="Lampa внутри приложения">
-  <img src="docs/screenshots/settings.jpg" width="220" alt="Настройки">
-</p>
-<p align="center">
-  <img src="docs/screenshots/player.jpg" width="440" alt="Плеер: метки заставок и рекламы на полосе">
-  <img src="docs/screenshots/next.jpg" width="440" alt="Отсчёт до следующей серии">
-</p>
-<p align="center">
-  <img src="docs/screenshots/tracks.jpg" width="440" alt="Все субтитры от Lampa">
-</p>
+## Скриншоты
+
+**Lampa внутри приложения**
+
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/lampa.jpg" width="230"><br>Главная Lampa</td>
+<td align="center"><img src="docs/screenshots/lampa-menu.jpg" width="230"><br>Пункт «Lampa Player» в меню</td>
+<td align="center"><img src="docs/screenshots/lampa-card.jpg" width="230"><br>Карточка сериала</td>
+</tr>
+</table>
+
+**Плеер**
+
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/player.jpg" width="420"><br>Управление. На полосе метки: жёлтые — заставки и титры, красная — реклама</td>
+<td align="center"><img src="docs/screenshots/skip.jpg" width="420"><br>Кнопка «Пропустить» на заставке</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/next.jpg" width="420"><br>Отсчёт до следующей серии на титрах</td>
+<td align="center"><img src="docs/screenshots/playlist.jpg" width="420"><br>Серии сезона</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/tracks.jpg" width="420"><br>Все субтитры из Lampa, русские выбраны сами</td>
+<td align="center"><img src="docs/screenshots/tuning.jpg" width="420"><br>Задержка звука и субтитров, размер субтитров</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/seek.jpg" width="420"><br>Перемотка свайпом</td>
+<td align="center"><img src="docs/screenshots/volume.jpg" width="420"><br>Громкость свайпом справа (яркость — слева)</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/screenshots/lock.jpg" width="420"><br>Блокировка экрана</td>
+<td align="center"><img src="docs/screenshots/tech.jpg" width="420"><br>Тех. данные и лог</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/portrait.jpg" width="230"><br>Вертикальный режим</td>
+</tr>
+</table>
+
+**Настройки**
+
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/settings.jpg" width="200"><br>Lampa и ссылки</td>
+<td align="center"><img src="docs/screenshots/settings-plugin.jpg" width="200"><br>Плагин</td>
+<td align="center"><img src="docs/screenshots/settings-torr.jpg" width="200"><br>Встроенный TorrServer</td>
+<td align="center"><img src="docs/screenshots/settings-video.jpg" width="200"><br>Видео и общие</td>
+</tr>
+</table>
 
 Скриншоты снимаются в iOS-симуляторе: Actions → Screenshots → Run workflow (`tools/screenshots.sh`, демо-режим в `LampaPlayer/Demo.swift`). В плеере — открытый фильм Blender «Tears of Steel».
 
