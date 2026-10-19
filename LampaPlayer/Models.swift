@@ -133,6 +133,18 @@ struct MediaTrack: Identifiable, Hashable {
         return parts.joined(separator: ", ")
     }
 
+    /// Коротко для кнопки под названием: имя озвучки («Кубик в Кубе») или язык.
+    var chipTitle: String {
+        cleanTitle ?? lang.flatMap { Self.languageName($0) } ?? "Дорожка \(id)"
+    }
+
+    /// Двухбуквенный код языка для кнопки субтитров: «RU», «EN».
+    var languageCode: String? {
+        guard let lang, !lang.isEmpty else { return nil }
+        let lower = lang.lowercased()
+        return (Self.iso3to1[lower] ?? lower).uppercased()
+    }
+
     var menuTitle: String {
         details.isEmpty ? label : "\(label) — \(details)"
     }
@@ -226,6 +238,13 @@ enum AppSettings {
     /// Отсчёт «Следующая серия через 10 с» на титрах.
     static var autoNext: Bool {
         UserDefaults.standard.object(forKey: autoNextKey) as? Bool ?? true
+    }
+
+    /// Тех. строки поверх видео (кодек, битрейт, канал, буфер), пока видны контролы.
+    static let statsOverlayKey = "statsOverlay"
+    static var statsOverlay: Bool {
+        get { UserDefaults.standard.object(forKey: statsOverlayKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: statsOverlayKey) }
     }
 
     static let lampaURLKey = "lampaURL"

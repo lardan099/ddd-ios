@@ -122,6 +122,7 @@ struct PlayerView: View {
     @State private var showUnlock = false
     @State private var unlockHideToken = 0
     @State private var demoStaged = false
+    @AppStorage(AppSettings.statsOverlayKey) private var showStats = true
 
     /// Сколько секунд перемотки даёт свайп на всю ширину экрана.
     private let seekSpan: Double = 120
@@ -500,6 +501,7 @@ struct PlayerView: View {
 
             VStack(spacing: 0) {
                 topBar
+                infoRow
                 Spacer(minLength: 0)
                 centerButtons
                 Spacer(minLength: 0)
@@ -541,6 +543,39 @@ struct PlayerView: View {
         }
     }
 
+    /// Под названием: кнопки качества, озвучки и субтитров; справа — тех. строки (горизонтально) или под кнопками.
+    @ViewBuilder private var infoRow: some View {
+        let chips = InfoChips(stats: model.statsStore,
+                              audio: model.audioTracks.first(where: { $0.selected })?.chipTitle,
+                              hasAudio: !model.audioTracks.isEmpty,
+                              subtitles: model.subTracks.first(where: { $0.selected }).map { $0.languageCode ?? $0.chipTitle },
+                              hasSubtitles: !model.subTracks.isEmpty,
+                              onQuality: { sheet = .tech },
+                              onAudio: { sheet = .audio },
+                              onSubtitles: { sheet = .subtitles })
+        if isPortrait {
+            VStack(alignment: .leading, spacing: 8) {
+                chips
+                if showStats {
+                    StatsOverlay(stats: model.statsStore, clock: model.clock, speed: model.playbackSpeed, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 4)
+            .padding(.top, 6)
+        } else {
+            HStack(alignment: .top, spacing: 12) {
+                chips
+                Spacer(minLength: 0)
+                if showStats {
+                    StatsOverlay(stats: model.statsStore, clock: model.clock, speed: model.playbackSpeed, alignment: .trailing)
+                }
+            }
+            .padding(.leading, 52)
+            .padding(.top, 2)
+        }
+    }
+
     /// Озвучка, субтитры, серии и меню — над полосой перемотки, чтобы влезало и вертикально.
     private var actionRow: some View {
         HStack(spacing: 4) {
@@ -568,6 +603,10 @@ struct PlayerView: View {
                         }
                     }
                 }
+            }
+            Button { showStats.toggle() } label: {
+                Label(showStats ? "Скрыть тех. строки" : "Тех. строки поверх видео",
+                      systemImage: showStats ? "eye.slash" : "info.circle")
             }
             Button { model.toggleFill() } label: {
                 Label(model.fill ? "Вписать в экран" : "Заполнить экран",
@@ -701,6 +740,91 @@ struct PlayerView: View {
         guard let raw = model.successURL, let url = URL(string: raw),
               let scheme = url.scheme?.lowercased(), scheme != "http", scheme != "https", scheme != "infuse" else { return }
         UIApplication.shared.open(url)
+    }
+}
+
+/// Кнопки-чипы под названием: «1080P · HDR10», «Кубик в Кубе», «RU». Тап — выбор дорожки или тех. данные.
+struct InfoChips: View {
+    @ObservedObject var stats: PlayerStatsStore
+    let audio: String?
+    let hasAudio: Bool
+    let subtitles: String?
+    let hasSubtitles: Bool
+    let onQuality: () -> Void
+    let onAudio: () -> Void
+    let onSubtitles: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let quality = stats.value.quality {
+                chip(nil, [quality, stats.value.hdr].compactMap { $0 }.joined(separator: " · "), action: onQuality)
+            }
+            if hasAudio {
+                chip("speaker.wave.2.fill", audio ?? "Без звука", action: onAudio)
+            }
+            if hasSubtitles {
+                chip("captions.bubble", subtitles ?? "Выкл", action: onSubtitles)
+            }
+        }
+    }
+
+    private func chip(_ icon: String?, _ text: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)) }
+                // Длинные названия озвучек режем сами: гибкая ширина растянула бы чипы на всю строку.
+                Text((text.count > 22 ? String(text.prefix(21)) + "…" : text).uppercased())
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.55), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Тех. строки поверх видео: время и конец серии, кодек и битрейт, канал и буфер.
+struct StatsOverlay: View {
+    @ObservedObject var stats: PlayerStatsStore
+    @ObservedObject var clock: PlaybackClock
+    let speed: Double
+    let alignment: HorizontalAlignment
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    /// «16:31 [16:57]» — сейчас и когда закончится серия с учётом скорости.
+    private var clockLine: String {
+        let now = Date()
+        var text = Self.timeFormatter.string(from: now)
+        if clock.duration > 0 {
+            let left = max(clock.duration - clock.position, 0) / max(speed, 0.1)
+            text += "  [\(Self.timeFormatter.string(from: now.addingTimeInterval(left)))]"
+        }
+        return text
+    }
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 2) {
+            Text(clockLine)
+            if let line = stats.value.videoLine { Text(line) }
+            if let line = stats.value.networkLine { Text(line) }
+        }
+        .font(.system(size: 13).monospacedDigit())
+        .foregroundColor(.white.opacity(0.65))
+        .multilineTextAlignment(alignment == .trailing ? .trailing : .leading)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .shadow(color: .black.opacity(0.6), radius: 2)
+        .allowsHitTesting(false)
     }
 }
 

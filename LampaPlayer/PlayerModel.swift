@@ -73,6 +73,20 @@ final class MPVVideoView: UIView {
 
 /// Часто меняющееся время воспроизведения живёт отдельно: иначе весь экран с кнопками
 /// перерисовывается дважды в секунду, и нажатия теряются.
+struct PlayerStats: Equatable {
+    /// «1080p», «4K».
+    var quality: String?
+    var hdr: String?
+    /// «hevc 1920×960 (13,8 Мбит/с) HDR10 msk05»
+    var videoLine: String?
+    /// «Канал: 46,0 Мбит/с  Буфер: 59 с»
+    var networkLine: String?
+}
+
+final class PlayerStatsStore: ObservableObject {
+    @Published var value = PlayerStats()
+}
+
 final class PlaybackClock: ObservableObject {
     @Published var position: Double = 0
     @Published var duration: Double = 0
@@ -122,6 +136,8 @@ final class PlayerModel: ObservableObject {
     let videoView: MPVVideoView
     let clock = PlaybackClock()
     let thumbnails = ThumbnailProvider()
+    /// Тех. строки и качество — отдельно, чтобы раз в секунду перерисовывалась только плашка, а не весь плеер.
+    let statsStore = PlayerStatsStore()
     let successURL: String?
     /// Плеер свёрнут в картинку в картинке: полноэкранного экрана нет, а воспроизведение идёт.
     var collapsed = false
@@ -622,12 +638,25 @@ final class PlayerModel: ObservableObject {
         var buffering: Bool?
         var percent: Int?
         var speed: Int64?
+        var video: VideoStats?
+    }
+
+    /// Сырые данные для тех. строк и кнопки качества (читаются на очереди mpv, пока видны контролы).
+    private struct VideoStats {
+        var codec: String?
+        var width: Int?
+        var height: Int?
+        var bitrate: Double?
+        var gamma: String?
+        var cacheSpeed: Int64?
+        var cacheDuration: Double?
     }
 
     private func tick() {
         guard alive, !tickInFlight else { return }
         tickInFlight = true
         let wantStats = loading || buffering
+        let wantVideo = controlsVisible
         onQueue { [weak self] h in
             var s = Snapshot()
             s.position = Self.qDouble(h, "time-pos")
@@ -635,12 +664,72 @@ final class PlayerModel: ObservableObject {
             s.cacheTime = Self.qDouble(h, "demuxer-cache-time")
             s.paused = Self.qFlag(h, "pause")
             s.buffering = Self.qFlag(h, "paused-for-cache")
+            if wantStats || wantVideo {
+                s.speed = Self.qInt(h, "cache-speed")
+            }
             if wantStats {
                 s.percent = Self.qInt(h, "cache-buffering-state").map { Int($0) }
-                s.speed = Self.qInt(h, "cache-speed")
+            }
+            if wantVideo {
+                s.video = VideoStats(
+                    codec: Self.qString(h, "video-format"),
+                    width: Self.qInt(h, "video-params/w").map { Int($0) },
+                    height: Self.qInt(h, "video-params/h").map { Int($0) },
+                    bitrate: Self.qDouble(h, "video-bitrate"),
+                    gamma: Self.qString(h, "video-params/gamma"),
+                    cacheSpeed: s.speed,
+                    cacheDuration: Self.qDouble(h, "demuxer-cache-duration"))
             }
             DispatchQueue.main.async { self?.apply(s) }
         }
+    }
+
+    private func applyVideoStats(_ v: VideoStats) {
+        var stats = PlayerStats()
+        // Качество — по ширине: кино 1920×800 — это всё равно «1080p».
+        if let w = v.width, let h = v.height, w > 0, h > 0 {
+            switch w {
+            case 3200...: stats.quality = "4K"
+            case 2300..<3200: stats.quality = "1440p"
+            case 1800..<2300: stats.quality = "1080p"
+            case 1200..<1800: stats.quality = "720p"
+            default: stats.quality = "\(h)p"
+            }
+        }
+        switch v.gamma {
+        case "pq": stats.hdr = "HDR10"
+        case "hlg": stats.hdr = "HLG"
+        default: break
+        }
+        var video: [String] = []
+        if let codec = v.codec { video.append(codec) }
+        if let w = v.width, let h = v.height, w > 0, h > 0 { video.append("\(w)×\(h)") }
+        if let rate = v.bitrate, rate > 0 { video.append("(\(Self.formatMbit(rate)))") }
+        if let hdr = stats.hdr { video.append(hdr) }
+        if let host = sourceLabel { video.append(host) }
+        stats.videoLine = video.isEmpty ? nil : video.joined(separator: " ")
+        var net: [String] = []
+        if let speed = v.cacheSpeed, speed > 0 { net.append("Канал: " + Self.formatMbit(Double(speed) * 8)) }
+        if let buffer = v.cacheDuration { net.append(String(format: "Буфер: %.0f с", buffer)) }
+        stats.networkLine = net.isEmpty ? nil : net.joined(separator: "  ")
+        if stats != statsStore.value { statsStore.value = stats }
+    }
+
+    /// «13,8 Мбит/с» — по-русски, с запятой.
+    private static func formatMbit(_ bitsPerSecond: Double) -> String {
+        let text = bitsPerSecond >= 1_000_000
+            ? String(format: "%.1f Мбит/с", bitsPerSecond / 1_000_000)
+            : String(format: "%.0f кбит/с", bitsPerSecond / 1000)
+        return text.replacingOccurrences(of: ".", with: ",")
+    }
+
+    /// Откуда идёт видео, коротко: «TorrServer» или первая часть адреса CDN («msk05» из msk05.cdn.net).
+    private var sourceLabel: String? {
+        guard let host = URLComponents(string: current.url)?.host?.lowercased(), !host.isEmpty else { return nil }
+        if host == "127.0.0.1" || host == "localhost" { return "TorrServer" }
+        let parts = host.split(separator: ".")
+        if parts.count >= 3, parts.allSatisfy({ !$0.allSatisfy(\.isNumber) }) { return String(parts[0]) }
+        return host
     }
 
     private func apply(_ s: Snapshot) {
@@ -652,6 +741,7 @@ final class PlayerModel: ObservableObject {
             if current.segments != nil { refreshSegments() }
         }
         cacheEnd = s.cacheTime ?? 0
+        if let v = s.video { applyVideoStats(v) }
         if let p = s.paused, p != paused { paused = p }
         if let b = s.buffering, b != buffering { buffering = b }
         if loading || buffering {
