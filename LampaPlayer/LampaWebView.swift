@@ -21,6 +21,18 @@ final class LampaBridge: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.pushProgress() }
     }
 
+    /// Пока идёт наш плеер (и в PiP), Lampa не должна ничего играть: её заставка «Природа»/Aerial
+    /// через N минут без касаний запускает <video> и отбирает у mpv звук и картинку.
+    func setPlayerActive(_ active: Bool) {
+        guard let webView else { return }
+        let script = active
+            ? "(function(){try{var s=window.Lampa&&Lampa.Screensaver;if(!s)return;window.__lampaPlayerSS=s.enabled;if(s.isWorked())s.stopSlideshow();s.disable()}catch(e){}})()"
+            : "(function(){try{var s=window.Lampa&&Lampa.Screensaver;if(s&&window.__lampaPlayerSS!==false)s.enable()}catch(e){}})()"
+        webView.evaluateJavaScript(script, completionHandler: nil)
+        if active { webView.pauseAllMediaPlayback(completionHandler: nil) }
+        webView.setAllMediaPlaybackSuspended(active, completionHandler: nil)
+    }
+
     /// Отдаёт накопленные позиции в Lampa.Timeline (через функцию плагина) и забывает их при успехе.
     func pushProgress() {
         guard let webView else { return }

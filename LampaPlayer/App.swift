@@ -126,6 +126,7 @@ final class Router: ObservableObject {
         }
         session = model
         playerVisible = true
+        LampaBridge.shared.setPlayerActive(true)
     }
 
     /// PiP включился — убираем полноэкранный плеер, под ним Lampa. Видео идёт в окошке.
@@ -146,6 +147,7 @@ final class Router: ObservableObject {
         model.shutdown()
         AudioSession.deactivate()
         TorrServerManager.shared.playerActive = false
+        LampaBridge.shared.setPlayerActive(false)
         NotificationCenter.default.post(name: .lampaPlayerDidClose, object: nil)
     }
 }
