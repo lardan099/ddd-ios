@@ -16,7 +16,7 @@
     if (window.__lampa_player_ios) return;
     window.__lampa_player_ios = true;
 
-    var VERSION = '1.1.0';
+    var VERSION = '1.2.0';
     var API = 'http://127.0.0.1:8090/lampaplayer';
     var MAX_URL = 60000;
 
@@ -72,6 +72,11 @@
         if (seg) item.g = seg;
         var thumbs = src.thumbnails_vtt || src.thumbnails;
         if (typeof thumbs === 'string' && thumbs) item.v = thumbs;
+        // Перевод, выбранный в Lampa: у онлайн-потоков дорожка одна и без названия.
+        var voice = [src.voice_name, src.translate_name, src.translation, src.voice].filter(function (v) {
+            return typeof v === 'string' && v && v.length <= 60 && v.indexOf('<') < 0;
+        })[0];
+        if (voice) item.a = clean(voice);
         if (timeline.hash) {
             item.h = String(timeline.hash);
             if (timeline.time > 0) item.p = Math.floor(timeline.time);

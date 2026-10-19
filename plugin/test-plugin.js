@@ -48,6 +48,7 @@ const episodes = [1, 2, 3].map((n) => ({
     segments: { ad: [], skip: [{ start: 100 + n, end: 120 + n }], duration_ms: 1800000 },
     subtitles: [{ label: 'RUS - [FORCED]', url: 'https://s/f' + n + '.vtt' }, { label: 'ENG', url: 'https://s/e' + n + '.vtt' }],
     thumbnails_vtt: 'https://api.lampa.stream/thumbs/' + n + '.vtt',
+    voice_name: 'Кубик в Кубе',
     timeline: { hash: 1000 + n, time: n === 2 ? 300 : 0 },
 }));
 let result;
@@ -61,6 +62,7 @@ assert.strictEqual(payload.items[1].h, '1002');
 assert.deepStrictEqual(payload.items[0].g, { a: [], s: [[101, 121]], d: 1800000 });
 assert.strictEqual(payload.items[2].s.length, 2);
 assert.strictEqual(payload.c.title, 'Тед Лассо');
+assert.strictEqual(payload.items[0].a, 'Кубик в Кубе');
 console.log('online ok, url length', result.length);
 
 // Торрент: ссылки TorrServer, субтитры из раздачи, без сегментов.

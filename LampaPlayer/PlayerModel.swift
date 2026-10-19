@@ -942,6 +942,7 @@ final class PlayerModel: ObservableObject {
                     row("Название", item.displayTitle),
                     row("Ссылка", item.url),
                     row("Субтитры от Lampa", item.sub),
+                    row("Перевод из Lampa", item.voice),
                     row("Контейнер", v("file-format")),
                     row("Размер", bytes("file-size")),
                     row("Длительность", v("duration").flatMap(Double.init).map { Self.formatTime($0) }),

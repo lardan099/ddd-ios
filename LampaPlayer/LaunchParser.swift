@@ -93,6 +93,7 @@ enum LaunchParser {
                 if !segments.ads.isEmpty || !segments.skips.isEmpty { item.segments = segments }
             }
             if let thumbs = raw["v"] as? String, !thumbs.isEmpty { item.thumbnails = thumbs }
+            if let voice = raw["a"] as? String, !voice.isEmpty { item.voice = voice }
             if let hash = raw["h"] as? String, !hash.isEmpty { item.lampaHash = hash }
             else if let hash = number(raw["h"]) { item.lampaHash = String(Int64(hash)) }
             if let position = number(raw["p"]), position > 0 { item.position = position }

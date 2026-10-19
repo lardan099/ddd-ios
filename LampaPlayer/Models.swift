@@ -28,6 +28,8 @@ struct PlayItem: Codable, Hashable {
     var thumbnails: String?
     /// Ключ отметки просмотра в Lampa (timeline hash) — по нему плагин ставит прогресс.
     var lampaHash: String?
+    /// Перевод, выбранный в Lampa («Кубик в Кубе»): у онлайн-потоков дорожка обычно одна и без названия.
+    var voice: String?
 
     /// Все внешние субтитры: из плагина или единственные из infuse://.
     var externalSubtitles: [SubtitleRef] {

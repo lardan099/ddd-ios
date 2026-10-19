@@ -546,7 +546,10 @@ struct PlayerView: View {
     /// Под названием: кнопки качества, озвучки и субтитров; справа — тех. строки (горизонтально) или под кнопками.
     @ViewBuilder private var infoRow: some View {
         let chips = InfoChips(stats: model.statsStore,
-                              audio: model.audioTracks.first(where: { $0.selected })?.chipTitle,
+                              // Одна дорожка — показываем перевод из Lampa: у дорожки названия обычно нет.
+                              audio: model.audioTracks.count <= 1 && model.current.voice != nil
+                                  ? model.current.voice
+                                  : model.audioTracks.first(where: { $0.selected })?.chipTitle,
                               hasAudio: !model.audioTracks.isEmpty,
                               subtitles: model.subTracks.first(where: { $0.selected }).map { $0.languageCode ?? $0.chipTitle },
                               hasSubtitles: !model.subTracks.isEmpty,
