@@ -6,6 +6,20 @@ Lampa и свой плеер в одном приложении для iOS. Lamp
 
 Идея взята у [DDD Player](https://github.com/usmanec/dddplayer) для Android: плейлисты, внешние субтитры, все дорожки и автовыбор языка. 3D здесь нет.
 
+<p align="center">
+  <img src="docs/screenshots/lampa.jpg" width="220" alt="Lampa внутри приложения">
+  <img src="docs/screenshots/settings.jpg" width="220" alt="Настройки">
+</p>
+<p align="center">
+  <img src="docs/screenshots/player.jpg" width="440" alt="Плеер: метки заставок и рекламы на полосе">
+  <img src="docs/screenshots/next.jpg" width="440" alt="Отсчёт до следующей серии">
+</p>
+<p align="center">
+  <img src="docs/screenshots/tracks.jpg" width="440" alt="Все субтитры от Lampa">
+</p>
+
+Скриншоты снимаются в iOS-симуляторе: Actions → Screenshots → Run workflow (`tools/screenshots.sh`, демо-режим в `LampaPlayer/Demo.swift`). В плеере — открытый фильм Blender «Tears of Steel».
+
 ## Lampa внутри приложения
 
 При запуске открывается ваша Lampa (адрес задаётся в настройках, по умолчанию `http://lampa.byskaz.ru`).

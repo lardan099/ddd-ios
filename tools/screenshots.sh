@@ -37,11 +37,13 @@ xcrun simctl status_bar "$DEVICE" override --time 9:41 --dataNetwork wifi --wifi
 xcrun simctl install "$DEVICE" "$APP"
 
 shot() {
-  local scene="$1" wait="$2"
+  local scene="$1" wait="$2" landscape="${3:-}"
   echo "== $scene (ждём ${wait} с)"
   SIMCTL_CHILD_LP_SHOT="$scene" xcrun simctl launch --terminate-running-process "$DEVICE" "$BUNDLE"
   sleep "$wait"
   xcrun simctl io "$DEVICE" screenshot "$RAW/$scene.png"
+  # simctl снимает экран в портретной раскладке, горизонтальный интерфейс выходит боком.
+  if [[ -n "$landscape" ]]; then sips -r 270 "$RAW/$scene.png" > /dev/null; fi
   xcrun simctl spawn "$DEVICE" log show --last "$((wait + 5))s" --style compact \
     --predicate 'process == "LampaPlayer"' > "$LOGS/$scene.log" 2>&1 || true
   # Для README хватит ~1400 px по длинной стороне, JPEG в разы меньше PNG.
@@ -52,9 +54,9 @@ shot() {
 
 shot lampa 30
 shot settings 25
-shot player 45
-shot tracks 45
-shot next 45
+shot player 45 landscape
+shot tracks 45 landscape
+shot next 45 landscape
 
 xcrun simctl terminate "$DEVICE" "$BUNDLE" || true
 ls -lh "$OUT"

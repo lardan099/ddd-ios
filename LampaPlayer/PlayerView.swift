@@ -247,7 +247,7 @@ struct PlayerView: View {
             // Режим скриншотов: видео загрузилось — ставим на паузу (контролы не прячутся) и открываем нужное.
             guard !loading, Demo.playerScene, !demoStaged else { return }
             demoStaged = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
                 if !model.paused { model.togglePause() }
                 if Demo.scene == "tracks" {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sheet = .subtitles }

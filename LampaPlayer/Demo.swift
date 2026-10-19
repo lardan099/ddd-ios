@@ -19,6 +19,9 @@ enum Demo {
 
     static func prepareDefaults() {
         guard scene != nil else { return }
+        // Каждая сцена начинает с нуля: иначе плеер продолжит с позиции прошлой сцены.
+        ResumeStore.clearAll()
+        HistoryStore.clear()
         let defaults = UserDefaults.standard
         defaults.set("ru", forKey: AppSettings.languageKey)
         defaults.set(true, forKey: AppSettings.autoNextKey)
