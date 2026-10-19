@@ -227,6 +227,24 @@ enum AppSettings {
         }
     }
 
+    static let subtitleModeKey = "subtitleMode"
+
+    /// Включать ли субтитры сами. Ручной выбор в плеере всё равно переносится на следующие серии.
+    enum SubtitleMode: String, CaseIterable {
+        case off, forced, auto
+        var title: String {
+            switch self {
+            case .off: return "Выключены"
+            case .forced: return "Только форсированные"
+            case .auto: return "Автоматически"
+            }
+        }
+    }
+
+    static var subtitleMode: SubtitleMode {
+        SubtitleMode(rawValue: UserDefaults.standard.string(forKey: subtitleModeKey) ?? "") ?? .off
+    }
+
     static var skipMode: SkipMode {
         get { SkipMode(rawValue: UserDefaults.standard.string(forKey: skipModeKey) ?? "") ?? .button }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: skipModeKey) }

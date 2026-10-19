@@ -58,6 +58,8 @@ enum Demo {
         let defaults = UserDefaults.standard
         defaults.set("ru", forKey: AppSettings.languageKey)
         defaults.set(true, forKey: AppSettings.autoNextKey)
+        // В демо русские субтитры должны включиться сами — их видно на скрине выбора дорожек.
+        defaults.set(AppSettings.SubtitleMode.auto.rawValue, forKey: AppSettings.subtitleModeKey)
         defaults.set(AppSettings.SkipMode.button.rawValue, forKey: AppSettings.skipModeKey)
         defaults.set(scene == "settings-torr", forKey: AppSettings.torrServerEnabledKey)
     }

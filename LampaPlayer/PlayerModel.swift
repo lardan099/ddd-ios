@@ -237,6 +237,7 @@ final class PlayerModel: ObservableObject {
         }
 
         let languages = LanguagePrefs.mpvList()
+        let subtitleMode = AppSettings.subtitleMode
         let fontsDir = Bundle.main.resourceURL?.appendingPathComponent("Fonts").path ?? ""
         options += [
             ("hwdec", hwdecValue),
@@ -265,10 +266,11 @@ final class PlayerModel: ObservableObject {
             ("user-agent", AppSettings.webUserAgent ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
             // Автовыбор озвучки и субтитров по языку.
             ("alang", languages),
-            ("slang", languages),
+            // Субтитры — по режиму из настроек; что mpv всё же выберет, поправит enforceSubtitleMode().
+            ("slang", subtitleMode == .off ? "" : languages),
             ("subs-with-matching-audio", "forced"),
-            ("subs-fallback", "default"),
-            ("subs-fallback-forced", "yes"),
+            ("subs-fallback", subtitleMode == .auto ? "default" : "no"),
+            ("subs-fallback-forced", subtitleMode == .off ? "no" : "yes"),
             ("demuxer-mkv-subtitle-preroll", "yes"),
             ("sub-fonts-dir", fontsDir),
             ("sub-font", "Roboto"),
@@ -866,6 +868,7 @@ final class PlayerModel: ObservableObject {
         publishTracks(tracks)
         applyRememberedTracks()
         autoSelectExternalSubtitles()
+        enforceSubtitleMode()
         refreshSegments()
         updateNowPlaying(force: true)
         HistoryStore.record(items: items, index: index)
@@ -1029,7 +1032,8 @@ final class PlayerModel: ObservableObject {
     /// Внешние субтитры mpv не выбирает сам (добавлены после автовыбора). Правило как у встроенных:
     /// озвучка на нашем языке — только форсированные, иначе полные на нашем языке.
     private func autoSelectExternalSubtitles() {
-        guard subChoice == nil, !subTracks.contains(where: { $0.selected }) else { return }
+        let mode = AppSettings.subtitleMode
+        guard mode != .off, subChoice == nil, !subTracks.contains(where: { $0.selected }) else { return }
         let external = subTracks.filter { $0.external }
         guard !external.isEmpty else { return }
 
@@ -1038,16 +1042,33 @@ final class PlayerModel: ObservableObject {
             guard let lang = lang?.lowercased() else { return false }
             return preferred.contains(lang)
         }
-        func isForced(_ track: MediaTrack) -> Bool {
-            track.forced || (track.title?.lowercased().contains("forced") ?? false)
-                || (track.title?.lowercased().contains("форс") ?? false)
-        }
 
         let audioLang = audioTracks.first(where: { $0.selected })?.lang
         let audioIsOurs = isPreferred(audioLang)
         let ours = external.filter { isPreferred($0.lang) }
-        let pick = audioIsOurs ? ours.first(where: isForced) : (ours.first(where: { !isForced($0) }) ?? ours.first)
+        let pick = audioIsOurs || mode == .forced
+            ? ours.first(where: Self.isForced)
+            : (ours.first(where: { !Self.isForced($0) }) ?? ours.first)
         if let pick { set("sid", "\(pick.id)") }
+    }
+
+    private static func isForced(_ track: MediaTrack) -> Bool {
+        track.forced || (track.title?.lowercased().contains("forced") ?? false)
+            || (track.title?.lowercased().contains("форс") ?? false)
+    }
+
+    /// Режим из настроек сильнее автовыбора mpv (он включает дорожки с флагом «по умолчанию» и полные
+    /// субтитры, когда у озвучки нет метки языка). Ручной выбор в этой сессии сильнее режима.
+    private func enforceSubtitleMode() {
+        guard subChoice == nil, let selected = subTracks.first(where: { $0.selected }) else { return }
+        switch AppSettings.subtitleMode {
+        case .auto:
+            return
+        case .forced:
+            if !Self.isForced(selected) { set("sid", "no") }
+        case .off:
+            set("sid", "no")
+        }
     }
 
     /// «RUS - [FORCED]», «ENG», «ukr / Повні» → трёхбуквенный код языка для mpv.

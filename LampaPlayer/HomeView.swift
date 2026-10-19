@@ -17,6 +17,7 @@ struct HomeView: View {
     @AppStorage(AppSettings.skipModeKey) private var skipMode = AppSettings.SkipMode.button.rawValue
     @State private var pluginCopied = false
     @AppStorage(AppSettings.autoNextKey) private var autoNext = true
+    @AppStorage(AppSettings.subtitleModeKey) private var subtitleMode = AppSettings.SubtitleMode.off.rawValue
     @AppStorage(AppSettings.lampaURLKey) private var lampaURL = AppSettings.defaultLampaURL
     @AppStorage(AppSettings.lampaEnabledKey) private var lampaEnabled = true
     @State private var pendingLampaMarks = 0
@@ -213,6 +214,11 @@ struct HomeView: View {
                             Text(item.title).tag(item.id)
                         }
                     }
+                    Picker("Субтитры", selection: $subtitleMode) {
+                        ForEach(AppSettings.SubtitleMode.allCases, id: \.rawValue) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
                     Toggle("Аппаратное декодирование", isOn: $hwdec)
                     Toggle("Отсчёт до следующей серии", isOn: $autoNext)
                     if !history.isEmpty {
@@ -221,7 +227,7 @@ struct HomeView: View {
                 } header: {
                     Text("Настройки")
                 } footer: {
-                    Text("Озвучка и субтитры выбираются автоматически по этому языку. Если на каком-то видео артефакты или зелёный экран, выключите аппаратное декодирование.")
+                    Text("Озвучка выбирается по этому языку. Субтитры: «Выключены» — только если включить вручную; «Только форсированные» — перевод надписей и иностранных вставок; «Автоматически» — полные, если озвучка не на вашем языке. Включённые вручную субтитры переносятся на следующие серии. Если на каком-то видео артефакты или зелёный экран, выключите аппаратное декодирование.")
                 }
 
                 Section {
