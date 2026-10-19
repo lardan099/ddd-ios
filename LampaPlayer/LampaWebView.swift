@@ -74,6 +74,8 @@ struct LampaWebView: UIViewRepresentable {
         controller.add(WeakScriptHandler(context.coordinator), name: "lampaPlayer")
         controller.addUserScript(WKUserScript(source: "window.__lampa_player_embedded = true;",
                                               injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: Self.standaloneScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: Self.dismissHomePromptScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         if let plugin = Self.pluginSource {
             controller.addUserScript(WKUserScript(source: plugin, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         }
@@ -101,6 +103,52 @@ struct LampaWebView: UIViewRepresentable {
             webView.load(URLRequest(url: url))
         }
     }
+
+    /// Lampa в приложении — уже «как с экрана Домой». Lampa и её плагины узнают это по navigator.standalone
+    /// и display-mode: standalone; иначе на iPhone при каждом входе просят «Добавьте Lampa на экран Домой».
+    static let standaloneScript = """
+    (function () {
+      try { Object.defineProperty(navigator, 'standalone', { get: function () { return true; }, configurable: true }); } catch (e) {}
+      var original = window.matchMedia;
+      if (!original) return;
+      window.matchMedia = function (query) {
+        if (/display-mode\\s*:\\s*(standalone|fullscreen)/i.test(String(query))) {
+          var noop = function () {};
+          return { matches: true, media: String(query), onchange: null, addListener: noop, removeListener: noop,
+                   addEventListener: noop, removeEventListener: noop, dispatchEvent: function () { return false; } };
+        }
+        return original.call(window, query);
+      };
+    })();
+    """
+
+    /// Запасной вариант: если напоминалка всё же показалась в первую минуту — нажимаем «Продолжить».
+    static let dismissHomePromptScript = """
+    (function () {
+      var started = Date.now();
+      var timer = setInterval(function () {
+        if (Date.now() - started > 60000) return clearInterval(timer);
+        var hit = document.evaluate("//*[contains(text(), 'на экран «Домой»')]", document.body, null,
+                                    XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+        if (!hit) return;
+        var box = hit;
+        for (var i = 0; i < 6 && box.parentElement && box.parentElement !== document.body; i++) {
+          box = box.parentElement;
+          var buttons = Array.prototype.slice.call(box.querySelectorAll('*')).filter(function (el) {
+            return el.children.length === 0 && /^\\s*Продолжить\\s*$/.test(el.textContent || '');
+          });
+          if (buttons.length) {
+            var button = buttons[0];
+            ['hover:enter', 'click'].forEach(function (name) {
+              try { if (window.$) $(button).trigger(name); } catch (e) {}
+            });
+            try { button.click(); } catch (e) {}
+            return;
+          }
+        }
+      }, 700);
+    })();
+    """
 
     /// Плагин лежит в бандле (тот же файл, что опубликован на GitHub Pages).
     static let pluginSource: String? = {
