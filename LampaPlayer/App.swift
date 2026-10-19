@@ -25,6 +25,7 @@ struct LampaPlayerApp: App {
                 }
             }
             .environmentObject(router)
+            .onAppear { Demo.start(router: router) }
             .onOpenURL { router.open($0) }
             .fullScreenCover(isPresented: $router.playerVisible) {
                 if let session = router.session {
@@ -158,6 +159,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        Demo.prepareDefaults()
         TorrServerManager.shared.startIfEnabled()
         return true
     }

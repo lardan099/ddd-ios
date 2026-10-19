@@ -121,6 +121,7 @@ struct PlayerView: View {
     @State private var locked = false
     @State private var showUnlock = false
     @State private var unlockHideToken = 0
+    @State private var demoStaged = false
 
     /// Сколько секунд перемотки даёт свайп на всю ширину экрана.
     private let seekSpan: Double = 120
@@ -240,6 +241,18 @@ struct PlayerView: View {
             TorrServerManager.shared.playerActive = true
             AudioSession.activate()
             model.start()
+            if Demo.playerScene { Orientation.toggle() }
+        }
+        .onChange(of: model.loading) { loading in
+            // Режим скриншотов: видео загрузилось — ставим на паузу (контролы не прячутся) и открываем нужное.
+            guard !loading, Demo.playerScene, !demoStaged else { return }
+            demoStaged = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                if !model.paused { model.togglePause() }
+                if Demo.scene == "tracks" {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sheet = .subtitles }
+                }
+            }
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
