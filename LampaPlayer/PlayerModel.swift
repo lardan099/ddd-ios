@@ -196,6 +196,14 @@ final class PlayerModel: ObservableObject {
     private struct TrackChoice { let title: String?; let lang: String?; let ordinal: Int; let off: Bool }
     private var audioChoice: TrackChoice?
     private var subChoice: TrackChoice?
+    /// Качество, выбранное вручную, — на все серии сессии. nil — лучшее из доступных.
+    @Published private(set) var qualityChoice: String?
+
+    /// Какое качество сейчас играет (если балансер дал несколько).
+    var currentQuality: QualityLink? {
+        guard let list = current.qualities, !list.isEmpty else { return nil }
+        return list.first(where: { $0.label == qualityChoice }) ?? list[0]
+    }
 
     init(request: PlaybackRequest) {
         items = request.items
@@ -433,12 +441,21 @@ final class PlayerModel: ObservableObject {
 
         let start = startAt > 1 ? String(format: "%.1f", startAt) : "none"
         // Ссылки на встроенный TorrServer — мимо прокси для Lampa, сразу на сам сервер.
-        let url = TorrServerManager.directURL(item.url)
+        // Балансер дал ссылки на качества — по умолчанию лучшее (его url не всегда максимальный).
+        let url = TorrServerManager.directURL(currentQuality?.url ?? item.url)
         onQueue { [weak self] h in
             self?.pendingSubs = item.externalSubtitles
             Self.qSet(h, "start", start)
             Self.qCommand(h, ["loadfile", url, "replace"])
         }
+    }
+
+    /// Другое качество — с той же позиции. Выбор держится на следующие серии.
+    func selectQuality(_ link: QualityLink) {
+        guard alive, link != currentQuality else { return }
+        qualityChoice = link.label
+        showToast("Качество: \(link.title)")
+        play(index: index, at: position > 1 ? position : nil)
     }
 
     func retry() {
@@ -918,6 +935,9 @@ final class PlayerModel: ObservableObject {
         guard alive else { return completion([]) }
         let output = self.output
         let item = current
+        let quality = currentQuality.map { link in
+            "\(link.title) из \((item.qualities ?? []).map(\.title).joined(separator: ", "))"
+        }
         onQueue { h in
             func v(_ name: String) -> String? {
                 guard let s = Self.qString(h, name), !s.isEmpty else { return nil }
@@ -943,6 +963,7 @@ final class PlayerModel: ObservableObject {
                     row("Ссылка", item.url),
                     row("Субтитры от Lampa", item.sub),
                     row("Перевод из Lampa", item.voice),
+                    row("Качество", quality),
                     row("Контейнер", v("file-format")),
                     row("Размер", bytes("file-size")),
                     row("Длительность", v("duration").flatMap(Double.init).map { Self.formatTime($0) }),

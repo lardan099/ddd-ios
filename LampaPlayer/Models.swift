@@ -13,6 +13,15 @@ struct SkipSegments: Codable, Hashable {
     var referenceDuration: Double
 }
 
+struct QualityLink: Codable, Hashable {
+    /// Как назвал балансер: «2160p», «1080p».
+    var label: String
+    var url: String
+
+    /// Для меню: «4K» вместо «2160p».
+    var title: String { label.hasPrefix("2160") ? "4K" : label }
+}
+
 struct PlayItem: Codable, Hashable {
     var url: String
     /// Имя файла / серии, как его передала Lampa (filename в infuse://).
@@ -30,6 +39,8 @@ struct PlayItem: Codable, Hashable {
     var lampaHash: String?
     /// Перевод, выбранный в Lampa («Кубик в Кубе»): у онлайн-потоков дорожка обычно одна и без названия.
     var voice: String?
+    /// Ссылки на качества от балансера (MODS, Showy), от лучшего к худшему. Пусто — только `url`.
+    var qualities: [QualityLink]?
 
     /// Все внешние субтитры: из плагина или единственные из infuse://.
     var externalSubtitles: [SubtitleRef] {

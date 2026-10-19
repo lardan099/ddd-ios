@@ -49,6 +49,7 @@ const episodes = [1, 2, 3].map((n) => ({
     subtitles: [{ label: 'RUS - [FORCED]', url: 'https://s/f' + n + '.vtt' }, { label: 'ENG', url: 'https://s/e' + n + '.vtt' }],
     thumbnails_vtt: 'https://api.lampa.stream/thumbs/' + n + '.vtt',
     voice_name: 'Кубик в Кубе',
+    quality: { '1080p': { label: 'FHD', url: 'https://q/1080/' + n }, '2160p': { label: '4K', url: 'https://q/2160/' + n }, '480p': 'https://q/480/' + n },
     timeline: { hash: 1000 + n, time: n === 2 ? 300 : 0 },
 }));
 let result;
@@ -63,6 +64,8 @@ assert.deepStrictEqual(payload.items[0].g, { a: [], s: [[101, 121]], d: 1800000 
 assert.strictEqual(payload.items[2].s.length, 2);
 assert.strictEqual(payload.c.title, 'Тед Лассо');
 assert.strictEqual(payload.items[0].a, 'Кубик в Кубе');
+assert.deepStrictEqual(payload.items[0].q.map((x) => x[0]), ['2160p', '1080p', '480p']);
+assert.strictEqual(payload.items[0].q[2][1], 'https://q/480/1');
 console.log('online ok, url length', result.length);
 
 // Торрент: ссылки TorrServer, субтитры из раздачи, без сегментов.
@@ -85,6 +88,19 @@ payload = decode(result);
 assert(result.length <= 60000, 'fits');
 assert.strictEqual(payload.items[payload.i].t, 'E150');
 console.log('big ok: items', payload.items.length, 'length', result.length);
+
+// Длинные ссылки на качества: у остальных серий выкидываются первыми, у открытой остаются.
+const heavy = Array.from({ length: 40 }, (_, n) => ({
+    title: 'Q' + n, url: 'https://x/' + 'b'.repeat(300) + n, timeline: { hash: 5000 + n },
+    quality: { '2160p': 'https://x/4k/' + 'c'.repeat(300) + n, '1080p': 'https://x/fhd/' + 'd'.repeat(300) + n,
+               '720p': 'https://x/hd/' + 'e'.repeat(300) + n },
+}));
+handlers.infuse_build_url({ data: Object.assign({}, heavy[10], { playlist: heavy }), setUrl: (u) => { result = u; } });
+payload = decode(result);
+assert(result.length <= 60000, 'heavy fits');
+assert.strictEqual(payload.items[payload.i].q.length, 3, 'current keeps qualities');
+assert.strictEqual(payload.items.length, 40, 'all episodes kept');
+console.log('qualities ok: length', result.length);
 
 // Прогресс обратно в Lampa.
 (async () => {

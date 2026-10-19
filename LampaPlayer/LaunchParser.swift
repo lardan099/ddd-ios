@@ -94,6 +94,13 @@ enum LaunchParser {
             }
             if let thumbs = raw["v"] as? String, !thumbs.isEmpty { item.thumbnails = thumbs }
             if let voice = raw["a"] as? String, !voice.isEmpty { item.voice = voice }
+            if let list = raw["q"] as? [[String]] {
+                let links = list.compactMap { pair -> QualityLink? in
+                    guard pair.count == 2, !pair[1].isEmpty else { return nil }
+                    return QualityLink(label: pair[0], url: pair[1])
+                }
+                if links.count > 1 { item.qualities = links }
+            }
             if let hash = raw["h"] as? String, !hash.isEmpty { item.lampaHash = hash }
             else if let hash = number(raw["h"]) { item.lampaHash = String(Int64(hash)) }
             if let position = number(raw["p"]), position > 0 { item.position = position }

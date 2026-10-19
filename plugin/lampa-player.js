@@ -16,7 +16,7 @@
     if (window.__lampa_player_ios) return;
     window.__lampa_player_ios = true;
 
-    var VERSION = '1.2.0';
+    var VERSION = '1.3.0';
     var API = 'http://127.0.0.1:8090/lampaplayer';
     var MAX_URL = 60000;
 
@@ -63,6 +63,20 @@
         return out.a.length || out.s.length ? out : null;
     }
 
+    // Ссылки на качества: Showy — { '1080p': url }, MODS — { '1080p': { label, url } }.
+    // Отдаём [[метка, ссылка], …] от лучшего к худшему.
+    function qualities(map) {
+        if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
+        var out = [];
+        for (var key in map) {
+            var v = map[key];
+            var link = typeof v === 'string' ? v : (v && typeof v.url === 'string' ? v.url : '');
+            if (link) out.push([String(key), playUrl(link)]);
+        }
+        var height = function (label) { var m = /(\d{3,4})/.exec(label); return m ? Number(m[1]) : (/4k/i.test(label) ? 2160 : 0); };
+        return out.sort(function (a, b) { return height(b[0]) - height(a[0]); });
+    }
+
     function itemFrom(src) {
         var timeline = src.timeline || {};
         var item = { u: playUrl(src.url), t: clean(src.title || src.path || '') };
@@ -77,6 +91,8 @@
             return typeof v === 'string' && v && v.length <= 60 && v.indexOf('<') < 0;
         })[0];
         if (voice) item.a = clean(voice);
+        var q = qualities(src.quality);
+        if (q.length > 1) item.q = q;
         if (timeline.hash) {
             item.h = String(timeline.hash);
             if (timeline.time > 0) item.p = Math.floor(timeline.time);
@@ -130,7 +146,12 @@
         var payload = { v: 1, i: index, c: card(data), items: items };
         var url = 'lampaplayer://lampa?d=' + encode(payload);
 
-        // Слишком длинно — оставляем окно серий вокруг текущей, потом выкидываем превью.
+        // Слишком длинно — сначала качества у остальных серий (у открытой — оставляем),
+        // потом окно серий вокруг текущей, потом превью.
+        if (url.length > MAX_URL) {
+            items.forEach(function (it, n) { if (n !== index) delete it.q; });
+            url = 'lampaplayer://lampa?d=' + encode(payload);
+        }
         var spans = [20, 10, 5, 2, 0];
         for (var k = 0; k < spans.length && url.length > MAX_URL; k++) {
             var from = Math.max(0, index - spans[k]), to = Math.min(items.length, index + spans[k] + 1);

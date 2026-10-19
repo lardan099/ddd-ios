@@ -553,6 +553,9 @@ struct PlayerView: View {
                               hasAudio: !model.audioTracks.isEmpty,
                               subtitles: model.subTracks.first(where: { $0.selected }).map { $0.languageCode ?? $0.chipTitle },
                               hasSubtitles: !model.subTracks.isEmpty,
+                              qualities: model.current.qualities ?? [],
+                              currentQuality: model.currentQuality,
+                              onSelectQuality: { model.selectQuality($0) },
                               onQuality: { sheet = .tech },
                               onAudio: { sheet = .audio },
                               onSubtitles: { sheet = .subtitles })
@@ -753,14 +756,37 @@ struct InfoChips: View {
     let hasAudio: Bool
     let subtitles: String?
     let hasSubtitles: Bool
+    /// Ссылки на качества от балансера: есть — чип открывает выбор, нет — тех. данные.
+    let qualities: [QualityLink]
+    let currentQuality: QualityLink?
+    let onSelectQuality: (QualityLink) -> Void
     let onQuality: () -> Void
     let onAudio: () -> Void
     let onSubtitles: () -> Void
 
+    private var qualityText: String? {
+        guard let quality = stats.value.quality else { return nil }
+        return [quality, stats.value.hdr].compactMap { $0 }.joined(separator: " · ")
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            if let quality = stats.value.quality {
-                chip(nil, [quality, stats.value.hdr].compactMap { $0 }.joined(separator: " · "), action: onQuality)
+            if qualities.count > 1 {
+                Menu {
+                    ForEach(qualities, id: \.self) { link in
+                        Button { onSelectQuality(link) } label: {
+                            if link == currentQuality {
+                                Label(link.title, systemImage: "checkmark")
+                            } else {
+                                Text(link.title)
+                            }
+                        }
+                    }
+                } label: {
+                    chipLabel("chevron.up.chevron.down", qualityText ?? currentQuality?.title ?? "Качество")
+                }
+            } else if let qualityText {
+                chip(nil, qualityText, action: onQuality)
             }
             if hasAudio {
                 chip("speaker.wave.2.fill", audio ?? "Без звука", action: onAudio)
@@ -772,22 +798,24 @@ struct InfoChips: View {
     }
 
     private func chip(_ icon: String?, _ text: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)) }
-                // Длинные названия озвучек режем сами: гибкая ширина растянула бы чипы на всю строку.
-                Text((text.count > 22 ? String(text.prefix(21)) + "…" : text).uppercased())
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.55), lineWidth: 1))
-            .contentShape(Rectangle())
+        Button(action: action) { chipLabel(icon, text) }
+            .buttonStyle(.plain)
+    }
+
+    private func chipLabel(_ icon: String?, _ text: String) -> some View {
+        HStack(spacing: 6) {
+            if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)) }
+            // Длинные названия озвучек режем сами: гибкая ширина растянула бы чипы на всю строку.
+            Text((text.count > 22 ? String(text.prefix(21)) + "…" : text).uppercased())
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
         }
-        .buttonStyle(.plain)
+        .foregroundColor(.white)
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.55), lineWidth: 1))
+        .contentShape(Rectangle())
     }
 }
 
