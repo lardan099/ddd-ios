@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         Demo.prepareDefaults()
         TorrServerManager.shared.startIfEnabled()
+        NetBridge.shared.start()
         return true
     }
 

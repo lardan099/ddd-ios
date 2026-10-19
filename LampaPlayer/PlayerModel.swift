@@ -409,7 +409,7 @@ final class PlayerModel: ObservableObject {
     func play(index newIndex: Int, at explicitStart: Double? = nil) {
         guard alive, items.indices.contains(newIndex) else { return }
         if started && newIndex != index { saveProgress() }
-        if newIndex != index { httpsRetried = false }
+        if newIndex != index { bridgeRetried = false }
         index = newIndex
         errorMessage = nil
         finished = false
@@ -443,16 +443,29 @@ final class PlayerModel: ObservableObject {
         let start = startAt > 1 ? String(format: "%.1f", startAt) : "none"
         // Ссылки на встроенный TorrServer — мимо прокси для Lampa, сразу на сам сервер.
         // Балансер дал ссылки на качества — по умолчанию лучшее (его url не всегда максимальный).
-        var url = Self.preferHTTPS(TorrServerManager.directURL(currentQuality?.url ?? item.url))
-        if forceHTTPS { url = Self.httpsVersion(of: url) ?? url }
-        forceHTTPS = false
-        loadedURL = url
-        let headers = Self.browserHeaders(for: url)
-        // Тот же выход в сеть, что у Lampa в WebView: через системный прокси VPN, если он есть.
-        let proxy = Self.isLocal(url) ? nil : SystemProxy.proxy(for: url)
-        if let proxy { appendLog("Через системный прокси \(proxy)") }
+        let remote = Self.preferHTTPS(TorrServerManager.directURL(currentQuality?.url ?? item.url))
+        // MODS и всё, что не открылось напрямую, — через мост URLSession (тот же выход в сеть, что у Lampa).
+        let bridged = !Self.isLocal(remote) && (forceBridge || Self.needsBridge(remote))
+        forceBridge = false
+        loadedURL = remote
+        loadedViaBridge = bridged
+        let url = bridged ? NetBridge.wrap(remote) : remote
+        let headers = Self.browserHeaders(for: remote)
+        // Напрямую — через системный прокси VPN, если он есть (WebView ходит через него).
+        let proxy = bridged || Self.isLocal(remote) ? nil : SystemProxy.proxy(for: remote)
+        if bridged {
+            NetBridge.shared.start()
+            NetBridge.shared.log = { [weak self] line in DispatchQueue.main.async { self?.appendLog(line) } }
+            appendLog("Через сетевой стек iOS (мост :\(NetBridge.port))")
+        } else if let proxy {
+            appendLog("Через системный прокси \(proxy)")
+        }
+        let subs = item.externalSubtitles.map { sub -> SubtitleRef in
+            guard bridged, !Self.isLocal(sub.url) else { return sub }
+            return SubtitleRef(url: NetBridge.wrap(sub.url), label: sub.label)
+        }
         onQueue { [weak self] h in
-            self?.pendingSubs = item.externalSubtitles
+            self?.pendingSubs = subs
             Self.qSet(h, "start", start)
             Self.qSet(h, "referrer", headers.referrer)
             Self.qSet(h, "http-header-fields", headers.fields)
@@ -461,10 +474,18 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    /// Что открывали последним (для повтора по https).
+    /// Что открывали последним (для повтора через мост и тех. данных).
     private var loadedURL = ""
-    private var forceHTTPS = false
-    private var httpsRetried = false
+    private var loadedViaBridge = false
+    private var forceBridge = false
+    private var bridgeRetried = false
+
+    /// MODS (api.lampa.stream) привязывает ссылку к IP получателя, CDN VK за ним — тоже.
+    /// FFmpeg с VPN выходит в сеть иначе, чем WebView, поэтому такие ссылки — сразу через мост.
+    private static func needsBridge(_ url: String) -> Bool {
+        guard let host = URLComponents(string: url)?.host?.lowercased() else { return false }
+        return host == "lampa.stream" || host.hasSuffix(".lampa.stream")
+    }
 
     /// Ссылки MODS (api.lampa.stream) — всегда по https. По http iOS может пустить их через «Частный узел iCloud»
     /// с другим IP, чем у Lampa, которая получала ссылку, — подпись не сходится, сервер отвечает 403.
@@ -957,11 +978,11 @@ final class PlayerModel: ObservableObject {
                 finished = true
             }
         case 4: // ERROR
-            // http-ссылка не открылась — один раз пробуем её же по https (см. preferHTTPS).
-            if !httpsRetried, !Self.isLocal(loadedURL), Self.httpsVersion(of: loadedURL) != nil {
-                httpsRetried = true
-                forceHTTPS = true
-                appendLog("Не открылось по http — пробую https")
+            // Напрямую не открылось (403 от CDN и т.п.) — один раз пробуем через мост URLSession.
+            if !bridgeRetried, !loadedViaBridge, !Self.isLocal(loadedURL) {
+                bridgeRetried = true
+                forceBridge = true
+                appendLog("Напрямую не открылось — пробую через сетевой стек iOS")
                 play(index: index, at: position > 1 ? position : nil)
                 return
             }
@@ -987,7 +1008,8 @@ final class PlayerModel: ObservableObject {
         let output = self.output
         let item = current
         let played = loadedURL.isEmpty ? item.url : loadedURL
-        let proxySummary = SystemProxy.summary + (SystemProxy.proxy(for: played).map { " → mpv через \($0)" } ?? "")
+        let proxySummary = SystemProxy.summary
+        let route = loadedViaBridge ? "через сетевой стек iOS, как у Lampa" : "напрямую (FFmpeg)"
         let quality = currentQuality.map { link in
             "\(link.title) из \((item.qualities ?? []).map(\.title).joined(separator: ", "))"
         }
@@ -1017,6 +1039,7 @@ final class PlayerModel: ObservableObject {
                     row("Субтитры от Lampa", item.sub),
                     row("Перевод из Lampa", item.voice),
                     row("Качество", quality),
+                    row("Сеть", route),
                     row("Системный прокси", proxySummary),
                     row("Контейнер", v("file-format")),
                     row("Размер", bytes("file-size")),

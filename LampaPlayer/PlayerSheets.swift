@@ -81,6 +81,8 @@ struct TechSheet: View {
     @State private var sections: [PlayerModel.TechSection] = []
     @State private var showServerLog = false
     @State private var copied = false
+    /// С какого адреса выходят в сеть Lampa и плеер — проверяется один раз при открытии.
+    @State private var addressRows: [(String, String)] = []
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -151,12 +153,19 @@ struct TechSheet: View {
         }
         .navigationViewStyle(.stack)
         .preferredColorScheme(.dark)
-        .onAppear(perform: refresh)
+        .onAppear {
+            refresh()
+            NetDiagnostics.check { rows in
+                addressRows = rows
+                refresh()
+            }
+        }
         .onReceive(timer) { _ in refresh() }
     }
 
     private func refresh() {
-        model.techInfo { sections = $0 }
+        let extra = addressRows.isEmpty ? [] : [PlayerModel.TechSection(title: "Адрес в сети", rows: addressRows)]
+        model.techInfo { sections = $0 + extra }
     }
 
     /// Всё одним текстом — чтобы переслать.
