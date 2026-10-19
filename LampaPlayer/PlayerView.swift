@@ -783,7 +783,10 @@ struct InfoChips: View {
                         }
                     }
                 } label: {
-                    chipLabel("chevron.up.chevron.down", qualityText ?? currentQuality?.title ?? "Качество")
+                    // Выбранное качество, а не разрешение кадра: «1440p» у балансера бывает 1920 в ширину.
+                    chipLabel("chevron.up.chevron.down",
+                              [currentQuality?.title ?? stats.value.quality ?? "Качество", stats.value.hdr]
+                                .compactMap { $0 }.joined(separator: " · "))
                 }
             } else if let qualityText {
                 chip(nil, qualityText, action: onQuality)

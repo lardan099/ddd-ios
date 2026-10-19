@@ -409,6 +409,7 @@ final class PlayerModel: ObservableObject {
     func play(index newIndex: Int, at explicitStart: Double? = nil) {
         guard alive, items.indices.contains(newIndex) else { return }
         if started && newIndex != index { saveProgress() }
+        if newIndex != index { httpsRetried = false }
         index = newIndex
         errorMessage = nil
         finished = false
@@ -442,12 +443,50 @@ final class PlayerModel: ObservableObject {
         let start = startAt > 1 ? String(format: "%.1f", startAt) : "none"
         // Ссылки на встроенный TorrServer — мимо прокси для Lampa, сразу на сам сервер.
         // Балансер дал ссылки на качества — по умолчанию лучшее (его url не всегда максимальный).
-        let url = TorrServerManager.directURL(currentQuality?.url ?? item.url)
+        var url = Self.preferHTTPS(TorrServerManager.directURL(currentQuality?.url ?? item.url))
+        if forceHTTPS { url = Self.httpsVersion(of: url) ?? url }
+        forceHTTPS = false
+        loadedURL = url
+        let headers = Self.browserHeaders(for: url)
         onQueue { [weak self] h in
             self?.pendingSubs = item.externalSubtitles
             Self.qSet(h, "start", start)
+            Self.qSet(h, "referrer", headers.referrer)
+            Self.qSet(h, "http-header-fields", headers.fields)
             Self.qCommand(h, ["loadfile", url, "replace"])
         }
+    }
+
+    /// Что открывали последним (для повтора по https).
+    private var loadedURL = ""
+    private var forceHTTPS = false
+    private var httpsRetried = false
+
+    /// Ссылки MODS (api.lampa.stream) — всегда по https. По http iOS может пустить их через «Частный узел iCloud»
+    /// с другим IP, чем у Lampa, которая получала ссылку, — подпись не сходится, сервер отвечает 403.
+    static func preferHTTPS(_ url: String) -> String {
+        guard url.hasPrefix("http://"), let host = URLComponents(string: url)?.host?.lowercased(),
+              host == "lampa.stream" || host.hasSuffix(".lampa.stream") else { return url }
+        return httpsVersion(of: url) ?? url
+    }
+
+    static func httpsVersion(of url: String) -> String? {
+        guard url.hasPrefix("http://") else { return nil }
+        return "https://" + url.dropFirst("http://".count)
+    }
+
+    private static func isLocal(_ url: String) -> Bool {
+        guard let host = URLComponents(string: url)?.host?.lowercased() else { return true }
+        return host == "127.0.0.1" || host == "localhost"
+    }
+
+    /// Referer и Origin как у браузера с Lampa: часть CDN без них отвечает 403.
+    /// TorrServer (локальный) — без них: в него зашит бан Referer/Origin зеркал Lampa.
+    private static func browserHeaders(for url: String) -> (referrer: String, fields: String) {
+        guard !isLocal(url), let lampa = AppSettings.normalizedLampaURL(AppSettings.lampaURL),
+              let scheme = lampa.scheme, let host = lampa.host else { return ("", "") }
+        let origin = "\(scheme)://\(host)" + (lampa.port.map { ":\($0)" } ?? "")
+        return (origin + "/", "Origin: " + origin)
     }
 
     /// Другое качество — с той же позиции. Выбор держится на следующие серии.
@@ -914,6 +953,14 @@ final class PlayerModel: ObservableObject {
                 finished = true
             }
         case 4: // ERROR
+            // http-ссылка не открылась — один раз пробуем её же по https (см. preferHTTPS).
+            if !httpsRetried, !Self.isLocal(loadedURL), Self.httpsVersion(of: loadedURL) != nil {
+                httpsRetried = true
+                forceHTTPS = true
+                appendLog("Не открылось по http — пробую https")
+                play(index: index, at: position > 1 ? position : nil)
+                return
+            }
             loading = false
             errorMessage = String(cString: mpv_error_string(error))
             controlsVisible = true
@@ -935,6 +982,7 @@ final class PlayerModel: ObservableObject {
         guard alive else { return completion([]) }
         let output = self.output
         let item = current
+        let played = loadedURL.isEmpty ? item.url : loadedURL
         let quality = currentQuality.map { link in
             "\(link.title) из \((item.qualities ?? []).map(\.title).joined(separator: ", "))"
         }
@@ -960,7 +1008,7 @@ final class PlayerModel: ObservableObject {
             let sections = [
                 TechSection(title: "Источник", rows: [
                     row("Название", item.displayTitle),
-                    row("Ссылка", item.url),
+                    row("Ссылка", played),
                     row("Субтитры от Lampa", item.sub),
                     row("Перевод из Lampa", item.voice),
                     row("Качество", quality),
