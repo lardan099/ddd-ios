@@ -448,11 +448,15 @@ final class PlayerModel: ObservableObject {
         forceHTTPS = false
         loadedURL = url
         let headers = Self.browserHeaders(for: url)
+        // Тот же выход в сеть, что у Lampa в WebView: через системный прокси VPN, если он есть.
+        let proxy = Self.isLocal(url) ? nil : SystemProxy.proxy(for: url)
+        if let proxy { appendLog("Через системный прокси \(proxy)") }
         onQueue { [weak self] h in
             self?.pendingSubs = item.externalSubtitles
             Self.qSet(h, "start", start)
             Self.qSet(h, "referrer", headers.referrer)
             Self.qSet(h, "http-header-fields", headers.fields)
+            Self.qSet(h, "http-proxy", proxy ?? "")
             Self.qCommand(h, ["loadfile", url, "replace"])
         }
     }
@@ -983,6 +987,7 @@ final class PlayerModel: ObservableObject {
         let output = self.output
         let item = current
         let played = loadedURL.isEmpty ? item.url : loadedURL
+        let proxySummary = SystemProxy.summary + (SystemProxy.proxy(for: played).map { " → mpv через \($0)" } ?? "")
         let quality = currentQuality.map { link in
             "\(link.title) из \((item.qualities ?? []).map(\.title).joined(separator: ", "))"
         }
@@ -1012,6 +1017,7 @@ final class PlayerModel: ObservableObject {
                     row("Субтитры от Lampa", item.sub),
                     row("Перевод из Lampa", item.voice),
                     row("Качество", quality),
+                    row("Системный прокси", proxySummary),
                     row("Контейнер", v("file-format")),
                     row("Размер", bytes("file-size")),
                     row("Длительность", v("duration").flatMap(Double.init).map { Self.formatTime($0) }),
