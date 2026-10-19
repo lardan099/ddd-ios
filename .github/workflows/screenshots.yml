@@ -80,4 +80,5 @@ jobs:
           git add docs/screenshots
           if git diff --cached --quiet; then echo "Скриншоты не изменились"; exit 0; fi
           git commit -m "Скриншоты для README [skip ci]"
-          git push
+          # Пока снимали, в main могли запушить — подтягиваем (скриншоты ни с чем не конфликтуют).
+          for i in 1 2 3; do git pull --rebase -q && git push && break; sleep 5; done
