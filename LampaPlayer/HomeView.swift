@@ -113,6 +113,7 @@ struct HomeView: View {
                         }
                         .buttonStyle(.borderless)
                     }
+                    .id("plugin")
                     Picker("Заставки и реклама", selection: $skipMode) {
                         ForEach(AppSettings.SkipMode.allCases, id: \.rawValue) { mode in
                             Text(mode.title).tag(mode.rawValue)
@@ -197,6 +198,7 @@ struct HomeView: View {
                         Text("AVFoundation — PiP и HDR").tag(VideoOutput.avfoundation.rawValue)
                         Text("libplacebo — без PiP").tag(VideoOutput.gpuNext.rawValue)
                     }
+                    .id("video")
                     Toggle("HDR", isOn: $hdr)
                     Toggle("Картинка в картинке при сворачивании", isOn: $autoPiP)
                 } header: {
@@ -240,9 +242,10 @@ struct HomeView: View {
                 }
             }
             .onAppear {
-                // Режим скриншотов: показать раздел TorrServer.
-                guard Demo.scene == "settings-torr" else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { proxy.scrollTo("torr", anchor: .top) }
+                // Режим скриншотов: «settings-<раздел>» — прокрутить к разделу (plugin, torr, video).
+                guard let scene = Demo.scene, scene.hasPrefix("settings-") else { return }
+                let target = String(scene.dropFirst("settings-".count))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { proxy.scrollTo(target, anchor: .top) }
             }
             }
             .navigationTitle("Lampa Player")

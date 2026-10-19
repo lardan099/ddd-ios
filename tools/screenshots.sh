@@ -65,17 +65,22 @@ shot() {
 }
 
 shot lampa 30
+shot lampa-menu 25
 shot lampa-card 35
-shot settings 20
-shot settings-torr 25
+shot settings 15
+shot settings-plugin 15
+shot settings-torr 20
+shot settings-video 15
 shot player 30 landscape
-shot subs 30 landscape
 shot skip 30 landscape
 shot next 25 landscape
 shot tracks 30 landscape
 shot playlist 30 landscape
 shot tuning 30 landscape
 shot tech 30 landscape
+shot lock 30 landscape
+shot volume 30 landscape
+shot seek 30 landscape
 shot portrait 30
 
 xcrun simctl terminate "$DEVICE" "$BUNDLE" || true

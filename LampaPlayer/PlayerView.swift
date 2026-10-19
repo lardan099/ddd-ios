@@ -249,8 +249,20 @@ struct PlayerView: View {
             demoStaged = true
             DispatchQueue.main.asyncAfter(deadline: .now() + Demo.pauseDelay) {
                 if !model.paused { model.togglePause() }
-                if let demoSheet = Demo.sheet {
+                switch Demo.action {
+                case .none:
+                    break
+                case .sheet(let demoSheet):
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sheet = demoSheet }
+                case .lock:
+                    locked = true
+                    showUnlock = true
+                case .volume:
+                    model.controlsVisible = false
+                    adjustment = .volume(0.65)
+                case .seek:
+                    model.controlsVisible = false
+                    seekPreview = (model.clock.position + 45, 45)
                 }
             }
         }
