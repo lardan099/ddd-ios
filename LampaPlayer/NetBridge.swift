@@ -155,11 +155,74 @@ final class NetBridge: NSObject {
             guard Self.forwarded.contains(name.lowercased()) else { continue }
             request.setValue(line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces), forHTTPHeaderField: name)
         }
-        let task = session.dataTask(with: request)
         let ex = Exchange(client: client, url: url, head: method == "HEAD")
+        ex.request = request
+        if let host = url.host?.lowercased(), webHosts.contains(host), !ex.head {
+            return viaWebView(ex)
+        }
+        let task = session.dataTask(with: request)
         ex.task = task
         exchanges[task.taskIdentifier] = ex
         task.resume()
+    }
+
+    // MARK: - Через WebView Lampa
+
+    /// Хосты, которые пускают только «браузерные» запросы (CDN VK): дальше ходим к ним fetch'ем из WebView.
+    private var webHosts: Set<String> = []
+
+    /// Тот же запрос — fetch изнутри Lampa: те же UA, TLS, Origin/Referer, sec-fetch, что у браузера.
+    private func viaWebView(_ ex: Exchange) {
+        ex.triedWeb = true
+        var headers: [String: String] = [:]
+        for name in ["Range", "Accept"] {
+            if let value = ex.request?.value(forHTTPHeaderField: name) { headers[name] = value }
+        }
+        let link = ex.url.absoluteString
+        DispatchQueue.main.async { [weak self] in
+            guard let webView = LampaBridge.shared.webView else {
+                self?.queue.async { self?.reply(ex.client, status: "403 Forbidden") }
+                return
+            }
+            webView.callAsyncJavaScript(Self.fetchScript, arguments: ["u": link, "h": headers], in: nil, in: .page) { result in
+                self?.queue.async { self?.finishWeb(ex, result: result) }
+            }
+        }
+    }
+
+    private static let fetchScript = """
+    const r = await fetch(u, {cache: 'no-store', headers: h});
+    const buf = new Uint8Array(await r.arrayBuffer());
+    let s = '';
+    for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return {status: r.status, url: r.url, type: r.headers.get('content-type') || '', range: r.headers.get('content-range') || '', b64: btoa(s)};
+    """
+
+    private func finishWeb(_ ex: Exchange, result: Result<Any, Error>) {
+        let host = ex.url.host?.lowercased() ?? "?"
+        guard case .success(let value) = result, let dict = value as? [String: Any],
+              let status = (dict["status"] as? NSNumber)?.intValue,
+              let b64 = dict["b64"] as? String, var body = Data(base64Encoded: b64) else {
+            if case .failure(let error) = result { log?("Мост: WebView не смог \(host) — \(error.localizedDescription)") }
+            return reply(ex.client, status: "502 Bad Gateway")
+        }
+        if status >= 400 {
+            log?("Мост: \(status) от \(host) и через WebView")
+        } else if !webHosts.contains(host) {
+            webHosts.insert(host)
+            log?("Мост: \(host) пускает только браузер — дальше через WebView Lampa")
+        }
+        let type = dict["type"] as? String ?? ""
+        let finalURL = (dict["url"] as? String).flatMap(URL.init(string:)) ?? ex.url
+        let ext = finalURL.pathExtension.lowercased()
+        if status < 300, type.lowercased().contains("mpegurl") || ext == "m3u8" || ext == "m3u" {
+            body = Self.rewritePlaylist(body, base: finalURL)
+        }
+        var lines = ["HTTP/1.1 \(status) \(status < 300 ? "OK" : "Error")", "Connection: close", "Content-Length: \(body.count)"]
+        if !type.isEmpty { lines.append("Content-Type: \(type)") }
+        if let range = dict["range"] as? String, !range.isEmpty { lines.append("Content-Range: \(range)") }
+        let head = Data((lines.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+        ex.client.send(content: head + body, completion: .contentProcessed { [weak client = ex.client] _ in client?.cancel() })
     }
 
     private func reply(_ client: NWConnection, status: String, headers: [String] = []) {
@@ -249,6 +312,8 @@ private final class Exchange {
     let url: URL
     let head: Bool
     var task: URLSessionDataTask?
+    var request: URLRequest?
+    var triedWeb = false
     var playlist = false
     var body = Data()
     var headersSent = false
@@ -285,6 +350,13 @@ extension NetBridge: URLSessionDataDelegate {
             return
         }
         if code >= 400 { log?("Мост: \(code) от \(ex.url.host ?? "?")") }
+        // CDN не пустил запрос URLSession — пробуем тот же запрос из WebView Lampa (как браузер).
+        if code == 403, !ex.triedWeb, !ex.head {
+            exchanges.removeValue(forKey: dataTask.taskIdentifier)
+            completionHandler(.cancel)
+            viaWebView(ex)
+            return
+        }
         ex.playlist = code < 300 && !ex.head && Self.isPlaylist(http, url: ex.url)
         if !ex.playlist {
             sendHeaders(ex, http: http, contentLength: nil)
