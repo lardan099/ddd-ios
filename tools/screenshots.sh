@@ -36,6 +36,18 @@ xcrun simctl status_bar "$DEVICE" override --time 9:41 --dataNetwork wifi --wifi
   --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
 xcrun simctl install "$DEVICE" "$APP"
 
+# Фильм и субтитры — локально в Documents/demo приложения (см. Demo.swift): без технической
+# надписи тестового HLS и без зависимости от сервера Blender во время съёмки (он режет частые запросы).
+DEMO="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE" data)/Documents/demo"
+mkdir -p "$DEMO"
+TOS=https://download.blender.org/demo/movies/ToS
+fetch() {
+  curl -fsSL --retry 6 --retry-delay 20 --retry-all-errors -o "$2" "$1" || { echo "не скачалось: $1"; rm -f "$2"; }
+}
+fetch "$TOS/tears_of_steel_720p.mov" "$DEMO/tos.mov"
+for lang in ru en de es fr-orig it; do fetch "$TOS/subtitles/TOS-$lang.srt" "$DEMO/TOS-$lang.srt"; done
+ls -lh "$DEMO"
+
 shot() {
   local scene="$1" wait="$2" landscape="${3:-}"
   echo "== $scene (ждём ${wait} с)"
@@ -53,10 +65,18 @@ shot() {
 }
 
 shot lampa 30
-shot settings 25
-shot player 45 landscape
-shot tracks 45 landscape
-shot next 45 landscape
+shot lampa-card 35
+shot settings 20
+shot settings-torr 25
+shot player 30 landscape
+shot subs 30 landscape
+shot skip 30 landscape
+shot next 25 landscape
+shot tracks 30 landscape
+shot playlist 30 landscape
+shot tuning 30 landscape
+shot tech 30 landscape
+shot portrait 30
 
 xcrun simctl terminate "$DEVICE" "$BUNDLE" || true
 ls -lh "$OUT"

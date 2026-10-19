@@ -37,6 +37,7 @@ struct HomeView: View {
 
     var body: some View {
         NavigationView {
+            ScrollViewReader { proxy in
             Form {
                 Section {
                     TextField("Адрес Lampa, например lampa.mx", text: $lampaURL)
@@ -137,6 +138,7 @@ struct HomeView: View {
                         }
                     ))
                     .disabled(torr.busy)
+                    .id("torr")
                     HStack {
                         Text("Состояние")
                         Spacer()
@@ -236,6 +238,12 @@ struct HomeView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 12)
                 }
+            }
+            .onAppear {
+                // Режим скриншотов: показать раздел TorrServer.
+                guard Demo.scene == "settings-torr" else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { proxy.scrollTo("torr", anchor: .top) }
+            }
             }
             .navigationTitle("Lampa Player")
             .toolbar {

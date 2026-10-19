@@ -241,16 +241,16 @@ struct PlayerView: View {
             TorrServerManager.shared.playerActive = true
             AudioSession.activate()
             model.start()
-            if Demo.playerScene { Orientation.toggle() }
+            if Demo.landscape { Orientation.toggle() }
         }
         .onChange(of: model.loading) { loading in
             // Режим скриншотов: видео загрузилось — ставим на паузу (контролы не прячутся) и открываем нужное.
             guard !loading, Demo.playerScene, !demoStaged else { return }
             demoStaged = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Demo.pauseDelay) {
                 if !model.paused { model.togglePause() }
-                if Demo.scene == "tracks" {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sheet = .subtitles }
+                if let demoSheet = Demo.sheet {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sheet = demoSheet }
                 }
             }
         }
