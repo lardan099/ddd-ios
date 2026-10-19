@@ -89,6 +89,25 @@ assert(result.length <= 60000, 'fits');
 assert.strictEqual(payload.items[payload.i].t, 'E150');
 console.log('big ok: items', payload.items.length, 'length', result.length);
 
+// Alloha: поток выбран вручную — data.url и его качества не совпадают с плейлистом.
+const allohaList = [1, 2, 3].map((n) => ({
+    title: 'Эпизод ' + n, season: 1, episode: n, url: 'https://api/stream1/E' + n + '.m3u8',
+    quality: { '1080p': 'https://api/stream1/E' + n + '.m3u8', '720p': 'https://api/stream1/E' + n + '_720.m3u8' },
+    timeline: { hash: 7000 + n },
+}));
+const picked = Object.assign({}, allohaList[1], {
+    url: 'https://api/stream2/E2.m3u8',
+    quality: { '1080p': 'https://api/stream2/E2.m3u8', '720p': 'https://api/stream2/E2_720.m3u8' },
+    playlist: allohaList,
+});
+handlers.infuse_build_url({ data: picked, setUrl: (u) => { result = u; } });
+payload = decode(result);
+assert.strictEqual(payload.i, 1, 'episode found by number');
+assert.strictEqual(payload.items[1].u, 'https://api/stream2/E2.m3u8', 'picked stream url');
+assert.strictEqual(payload.items[1].q[0][1], 'https://api/stream2/E2.m3u8', 'picked stream qualities');
+assert.strictEqual(payload.items[0].u, 'https://api/stream1/E1.m3u8');
+console.log('picked stream ok');
+
 // Длинные ссылки на качества: у остальных серий выкидываются первыми, у открытой остаются.
 const heavy = Array.from({ length: 40 }, (_, n) => ({
     title: 'Q' + n, url: 'https://x/' + 'b'.repeat(300) + n, timeline: { hash: 5000 + n },

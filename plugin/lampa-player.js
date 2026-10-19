@@ -16,7 +16,7 @@
     if (window.__lampa_player_ios) return;
     window.__lampa_player_ios = true;
 
-    var VERSION = '1.3.0';
+    var VERSION = '1.3.1';
     var API = 'http://127.0.0.1:8090/lampaplayer';
     var MAX_URL = 60000;
 
@@ -134,14 +134,26 @@
         });
         if (!list.length) list = [data];
 
-        var index = 0;
+        var index = -1;
         for (var i = 0; i < list.length; i++) {
             if (sameUrl(list[i].url, data.url)) { index = i; break; }
         }
+        // Выбрали поток вручную («Поток 1 / Поток 2» у Alloha) — его ссылки в плейлисте нет. Ищем серию по номеру.
+        if (index < 0 && data.episode !== undefined) {
+            for (var j = 0; j < list.length; j++) {
+                if (list[j].episode == data.episode && (data.season === undefined || list[j].season == data.season)) { index = j; break; }
+            }
+        }
+        if (index < 0) index = 0;
 
         var items = list.map(itemFrom);
         // У открытой серии самые свежие данные — в самом data (позиция, сегменты, субтитры).
-        items[index] = merge(items[index], itemFrom(data));
+        var fresh = itemFrom(data);
+        items[index] = merge(items[index], fresh);
+        // И ссылка с качествами — именно выбранного потока, а не той, что лежит в плейлисте.
+        items[index].u = fresh.u;
+        if (fresh.q) items[index].q = fresh.q;
+        else if (data.quality) delete items[index].q;
 
         var payload = { v: 1, i: index, c: card(data), items: items };
         var url = 'lampaplayer://lampa?d=' + encode(payload);
