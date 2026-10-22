@@ -1057,6 +1057,7 @@ final class PlayerModel: ObservableObject {
             + (useReserve ? ", запасная ссылка" : "")
         // Имена заголовков источника (значения — куки и токены — не показываем).
         let ownHeaders = item.headers.map { $0.keys.sorted().joined(separator: ", ") }
+        let reserve = item.reserveURL == nil ? nil : (useReserve ? "используется" : "есть")
         let quality = currentQuality.map { link in
             "\(link.title) из \((item.qualities ?? []).map(\.title).joined(separator: ", "))"
         }
@@ -1087,7 +1088,7 @@ final class PlayerModel: ObservableObject {
                     row("Перевод из Lampa", item.voice),
                     row("Качество", quality),
                     row("Заголовки источника", ownHeaders),
-                    row("Запасная ссылка", item.reserveURL == nil ? nil : (useReserve ? "используется" : "есть")),
+                    row("Запасная ссылка", reserve),
                     row("Сеть", route),
                     row("Системный прокси", proxySummary),
                     row("Контейнер", v("file-format")),
