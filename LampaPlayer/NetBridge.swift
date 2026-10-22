@@ -159,13 +159,30 @@ final class NetBridge: NSObject {
         }
         let ex = Exchange(client: client, url: url, head: method == "HEAD")
         ex.request = request
-        if let host = url.host?.lowercased(), webHosts.contains(host), !ex.head {
+        let host = url.host?.lowercased() ?? ""
+        if webHosts.contains(host), !ex.head {
             return viaWebView(ex)
         }
+        if bareHosts.contains(host) { ex.request = Self.bare(request) }
+        startTask(ex)
+    }
+
+    private func startTask(_ ex: Exchange) {
+        guard let request = ex.request else { return reply(ex.client, status: "400 Bad Request") }
         let task = session.dataTask(with: request)
         ex.task = task
         exchanges[task.taskIdentifier] = ex
         task.resume()
+    }
+
+    /// Хосты, которые пускают только без Referer/Origin (как системный плеер iOS — AVPlayer их не шлёт).
+    private var bareHosts: Set<String> = []
+
+    private static func bare(_ request: URLRequest) -> URLRequest {
+        var copy = request
+        copy.setValue(nil, forHTTPHeaderField: "Referer")
+        copy.setValue(nil, forHTTPHeaderField: "Origin")
+        return copy
     }
 
     // MARK: - Через WebView Lampa
@@ -318,6 +335,7 @@ private final class Exchange {
     var task: URLSessionDataTask?
     var request: URLRequest?
     var triedWeb = false
+    var triedBare = false
     var playlist = false
     var body = Data()
     var headersSent = false
@@ -353,8 +371,24 @@ extension NetBridge: URLSessionDataDelegate {
             reply(ex.client, status: "302 Found", headers: ["Location: " + Self.wrap(target.absoluteString)])
             return
         }
-        if code >= 400 { log?("Мост: \(code) от \(ex.url.host ?? "?")") }
-        // CDN не пустил запрос URLSession — пробуем тот же запрос из WebView Lampa (как браузер).
+        let host = ex.url.host?.lowercased() ?? "?"
+        if code >= 400 { log?("Мост: \(code) от \(host)" + (ex.triedBare ? " без Referer/Origin" : "")) }
+        if code < 400, ex.triedBare, !bareHosts.contains(host) {
+            bareHosts.insert(host)
+            log?("Мост: \(host) пускает только без Referer/Origin — дальше так")
+        }
+        // 403 — сначала тот же запрос без Referer/Origin: так ходит системный плеер iOS, а CDN бывает против
+        // «чужого» Origin (защита от хотлинка). Не помогло — из WebView Lampa, как браузер.
+        let request = ex.request
+        if code == 403, !ex.triedBare, !ex.head, let request,
+           request.value(forHTTPHeaderField: "Referer") != nil || request.value(forHTTPHeaderField: "Origin") != nil {
+            exchanges.removeValue(forKey: dataTask.taskIdentifier)
+            completionHandler(.cancel)
+            ex.triedBare = true
+            ex.request = Self.bare(request)
+            startTask(ex)
+            return
+        }
         if code == 403, !ex.triedWeb, !ex.head {
             exchanges.removeValue(forKey: dataTask.taskIdentifier)
             completionHandler(.cancel)

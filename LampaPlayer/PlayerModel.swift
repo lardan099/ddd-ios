@@ -413,6 +413,8 @@ final class PlayerModel: ObservableObject {
             bridgeRetried = false
             reserveTried = false
             useReserve = false
+            nativeLike = false
+            nativeTried = false
         }
         index = newIndex
         errorMessage = nil
@@ -456,7 +458,7 @@ final class PlayerModel: ObservableObject {
         loadedURL = remote
         loadedViaBridge = bridged
         let url = bridged ? NetBridge.wrap(remote) : remote
-        let headers = Self.requestHeaders(for: remote, item: item.headers)
+        let headers = Self.requestHeaders(for: remote, item: item.headers, nativeLike: nativeLike)
         // Напрямую — через системный прокси VPN, если он есть (WebView ходит через него).
         let proxy = bridged || Self.isLocal(remote) ? nil : SystemProxy.proxy(for: remote)
         if bridged {
@@ -491,17 +493,38 @@ final class PlayerModel: ObservableObject {
     private var bridgeRetried = false
     private var useReserve = false
     private var reserveTried = false
+    /// Последняя попытка: заголовки как у системного плеера iOS (встроенный плеер Lampa на iPhone играет так).
+    private var nativeLike = false
+    private var nativeTried = false
 
     static let defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     /// Заголовки запросов серии. Свои заголовки источника важнее наших; User-Agent — один:
     /// свой у источника есть — наш не добавляем (два User-Agent часть CDN встречает 403-м).
     /// Наши Referer/Origin — как у браузера с Lampa; в TorrServer (локальный) их не шлём: там на них бан.
-    private static func requestHeaders(for url: String, item: [String: String]?)
+    /// UA системного плеера iOS (AVPlayer) — так ходит встроенный плеер Lampa на iPhone.
+    static let coreMediaUserAgent: String = {
+        let version = UIDevice.current.systemVersion.replacingOccurrences(of: ".", with: "_")
+        let osInfo = ProcessInfo.processInfo.operatingSystemVersionString
+        let build = osInfo.range(of: #"Build ([0-9A-Za-z]+)"#, options: .regularExpression)
+            .map { String(osInfo[$0].dropFirst("Build ".count)) } ?? "22A3354"
+        let lang = (Locale.preferredLanguages.first ?? "ru-RU").replacingOccurrences(of: "-", with: "_").lowercased()
+        return "AppleCoreMedia/1.0.0.\(build) (iPhone; U; CPU OS \(version) like Mac OS X; \(lang))"
+    }()
+
+    private static func requestHeaders(for url: String, item: [String: String]?, nativeLike: Bool = false)
         -> (userAgent: String, referrer: String, fields: [String]) {
         let own = item ?? [:]
         func value(_ name: String) -> String? {
             own.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame })?.value
+        }
+        // «Как системный плеер»: UA AppleCoreMedia, без наших Referer/Origin. Свои заголовки источника остаются.
+        if nativeLike {
+            let fields = own
+                .filter { !["user-agent", "referer"].contains($0.key.lowercased()) }
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" }
+            return (value("User-Agent") ?? coreMediaUserAgent, value("Referer") ?? "", fields)
         }
         let userAgent = value("User-Agent") ?? AppSettings.webUserAgent ?? defaultUserAgent
         let lampa = browserHeaders(for: url)
@@ -1030,6 +1053,17 @@ final class PlayerModel: ObservableObject {
                 play(index: index, at: position > 1 ? position : nil)
                 return
             }
+            // Последняя попытка — вся цепочка заново «как системный плеер iOS»: основной поток, потом запасной.
+            if !nativeTried, !Self.isLocal(loadedURL) {
+                nativeTried = true
+                nativeLike = true
+                useReserve = false
+                reserveTried = false
+                forceBridge = loadedViaBridge
+                appendLog("Пробую как системный плеер iOS: \(Self.coreMediaUserAgent), без Referer/Origin")
+                play(index: index, at: position > 1 ? position : nil)
+                return
+            }
             loading = false
             errorMessage = String(cString: mpv_error_string(error))
             controlsVisible = true
@@ -1054,7 +1088,7 @@ final class PlayerModel: ObservableObject {
         let played = loadedURL.isEmpty ? item.url : loadedURL
         let proxySummary = SystemProxy.summary
         let route = (loadedViaBridge ? "через сетевой стек iOS, как у Lampa" : "напрямую (FFmpeg)")
-            + (useReserve ? ", запасная ссылка" : "")
+            + (useReserve ? ", запасная ссылка" : "") + (nativeLike ? ", как системный плеер iOS" : "")
         // Имена заголовков источника (значения — куки и токены — не показываем).
         let ownHeaders = item.headers.map { $0.keys.sorted().joined(separator: ", ") }
         let reserve = item.reserveURL == nil ? nil : (useReserve ? "используется" : "есть")
