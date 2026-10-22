@@ -100,6 +100,25 @@ assert.strictEqual(payload.items[0].r, 'https://cdn/h1_reserve.m3u8', 'reserve u
 assert.strictEqual(payload.items[1].r, undefined);
 console.log('headers ok');
 
+// Alloha-фильм, выбран «Поток 2»: url = url_reserve, а quality — от потока 1.
+const movie = {
+    title: 'Гарфилд', url: 'https://api/s2_1080.m3u8', url_reserve: 'https://api/s2_1080.m3u8',
+    quality: { '1080p': { url: 'https://api/s1_1080.m3u8' }, '720p': { url: 'https://api/s1_720.m3u8' } },
+    quality_reserve: { '1080p': { url: 'https://api/s2_1080.m3u8' }, '720p': { url: 'https://api/s2_720.m3u8' } },
+    timeline: { hash: 9001 },
+};
+handlers.infuse_build_url({ data: movie, setUrl: (u) => { result = u; } });
+payload = decode(result);
+assert.strictEqual(payload.items[0].u, 'https://api/s2_1080.m3u8');
+assert.deepStrictEqual(payload.items[0].q.map((x) => x[1]), ['https://api/s2_1080.m3u8', 'https://api/s2_720.m3u8'], 'qualities of picked stream 2');
+assert.strictEqual(payload.items[0].r, 'https://api/s1_1080.m3u8', 'reserve = stream 1');
+// «Поток 1»: качества потока 1, запасная — поток 2.
+handlers.infuse_build_url({ data: Object.assign({}, movie, { url: 'https://api/s1_1080.m3u8' }), setUrl: (u) => { result = u; } });
+payload = decode(result);
+assert.strictEqual(payload.items[0].q[0][1], 'https://api/s1_1080.m3u8', 'qualities of stream 1');
+assert.strictEqual(payload.items[0].r, 'https://api/s2_1080.m3u8', 'reserve = stream 2');
+console.log('two streams ok');
+
 // Огромный плейлист урезается окном вокруг текущей серии.
 const big = Array.from({ length: 200 }, (_, n) => ({ title: 'E' + n, url: 'https://x/' + 'a'.repeat(900) + n, timeline: { hash: n } }));
 handlers.infuse_build_url({ data: Object.assign({}, big[150], { playlist: big }), setUrl: (u) => { result = u; } });

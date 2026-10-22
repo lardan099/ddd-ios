@@ -16,7 +16,7 @@
     if (window.__lampa_player_ios) return;
     window.__lampa_player_ios = true;
 
-    var VERSION = '1.4.0';
+    var VERSION = '1.4.1';
     var API = 'http://127.0.0.1:8090/lampaplayer';
     var MAX_URL = 60000;
 
@@ -100,6 +100,21 @@
         return Object.keys(out).length ? out : null;
     }
 
+    // Два потока у MODS (Alloha: «Поток 1 / Поток 2»): url + quality — первый, url_reserve + quality_reserve — второй.
+    // Выбрали «Поток 2» — Lampa ставит url = url_reserve, а quality оставляет от первого. Берём качества того потока,
+    // в котором лежит выбранная ссылка, а запасной делаем другой поток (на него плеер переключится при ошибке).
+    function streams(src) {
+        var main = qualities(src.quality), reserve = qualities(src.quality_reserve);
+        var has = function (list, link) { return list.some(function (x) { return sameUrl(x[1], playUrl(link)); }); };
+        var url = src.url, alt = typeof src.url_reserve === 'string' ? src.url_reserve : '';
+        var onReserve = (alt && sameUrl(url, alt)) || (reserve.length && has(reserve, url) && !has(main, url));
+        if (onReserve) {
+            var other = main.length ? main[0][1] : '';
+            return { q: reserve, r: other && !sameUrl(other, playUrl(url)) ? other : '' };
+        }
+        return { q: main, r: alt && !sameUrl(alt, url) ? playUrl(alt) : '' };
+    }
+
     function itemFrom(src) {
         var timeline = src.timeline || {};
         var item = { u: playUrl(src.url), t: clean(src.title || src.path || '') };
@@ -114,15 +129,12 @@
             return typeof v === 'string' && v && v.length <= 60 && v.indexOf('<') < 0;
         })[0];
         if (voice) item.a = clean(voice);
-        var q = qualities(src.quality);
-        if (q.length > 1) item.q = q;
+        var picked = streams(src);
+        if (picked.q.length > 1) item.q = picked.q;
+        if (picked.r) item.r = picked.r;
         // Свои заголовки источника (User-Agent, Referer, Cookie…): без них часть CDN отвечает 403.
         var hd = headers(src.headers);
         if (hd) item.hd = hd;
-        // Запасная ссылка (MODS: url_reserve) — встроенный плеер Lampa переключается на неё при ошибке.
-        if (typeof src.url_reserve === 'string' && src.url_reserve && !sameUrl(src.url_reserve, src.url)) {
-            item.r = playUrl(src.url_reserve);
-        }
         if (timeline.hash) {
             item.h = String(timeline.hash);
             if (timeline.time > 0) item.p = Math.floor(timeline.time);
