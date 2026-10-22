@@ -41,6 +41,10 @@ struct PlayItem: Codable, Hashable {
     var voice: String?
     /// Ссылки на качества от балансера (MODS, Showy), от лучшего к худшему. Пусто — только `url`.
     var qualities: [QualityLink]?
+    /// Свои заголовки источника (User-Agent, Referer, Cookie…) — идут в каждый запрос этой серии.
+    var headers: [String: String]?
+    /// Запасная ссылка (MODS: url_reserve) — на неё переключаемся, если основная не открылась.
+    var reserveURL: String?
 
     /// Все внешние субтитры: из плагина или единственные из infuse://.
     var externalSubtitles: [SubtitleRef] {

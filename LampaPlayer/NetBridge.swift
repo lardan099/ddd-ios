@@ -134,8 +134,10 @@ final class NetBridge: NSObject {
         }
     }
 
-    /// Заголовки, которые передаём дальше как есть.
-    private static let forwarded: Set<String> = ["range", "user-agent", "referer", "origin", "accept", "accept-language"]
+    /// Заголовки, которые дальше не передаём: служебные для соединения и то, что URLSession ставит сама.
+    /// Всё остальное (User-Agent, Referer, Origin, Cookie, свои заголовки источника) — как прислал mpv.
+    private static let dropped: Set<String> = ["host", "connection", "keep-alive", "icy-metadata", "accept-encoding",
+                                               "content-length", "transfer-encoding", "proxy-connection"]
 
     private func handle(_ client: NWConnection, head: Data) {
         guard let text = String(data: head, encoding: .utf8) ?? String(data: head, encoding: .isoLatin1) else {
@@ -152,7 +154,7 @@ final class NetBridge: NSObject {
         for line in lines {
             guard let colon = line.firstIndex(of: ":") else { continue }
             let name = line[..<colon].trimmingCharacters(in: .whitespaces)
-            guard Self.forwarded.contains(name.lowercased()) else { continue }
+            guard !name.isEmpty, !Self.dropped.contains(name.lowercased()) else { continue }
             request.setValue(line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces), forHTTPHeaderField: name)
         }
         let ex = Exchange(client: client, url: url, head: method == "HEAD")
@@ -175,8 +177,10 @@ final class NetBridge: NSObject {
     private func viaWebView(_ ex: Exchange) {
         ex.triedWeb = true
         var headers: [String: String] = [:]
-        for name in ["Range", "Accept"] {
-            if let value = ex.request?.value(forHTTPHeaderField: name) { headers[name] = value }
+        // fetch не даёт задать User-Agent, Referer, Origin, Cookie — у WebView они и так свои, браузерные.
+        let forbidden: Set<String> = ["user-agent", "referer", "origin", "cookie"]
+        for (name, value) in ex.request?.allHTTPHeaderFields ?? [:] where !forbidden.contains(name.lowercased()) {
+            headers[name] = value
         }
         let link = ex.url.absoluteString
         DispatchQueue.main.async { [weak self] in

@@ -271,7 +271,7 @@ final class PlayerModel: ObservableObject {
             ("network-timeout", "90"),
             // Онлайн-CDN (okcdn и т.п.) сверяют UA с тем, что был у браузера при получении ссылки.
             // UA встроенной Lampa (если открывали её) — точное совпадение с браузером, который получил ссылку.
-            ("user-agent", AppSettings.webUserAgent ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
+            ("user-agent", AppSettings.webUserAgent ?? Self.defaultUserAgent),
             // Автовыбор озвучки и субтитров по языку.
             ("alang", languages),
             // Субтитры — по режиму из настроек; что mpv всё же выберет, поправит enforceSubtitleMode().
@@ -409,7 +409,11 @@ final class PlayerModel: ObservableObject {
     func play(index newIndex: Int, at explicitStart: Double? = nil) {
         guard alive, items.indices.contains(newIndex) else { return }
         if started && newIndex != index { saveProgress() }
-        if newIndex != index { bridgeRetried = false }
+        if newIndex != index {
+            bridgeRetried = false
+            reserveTried = false
+            useReserve = false
+        }
         index = newIndex
         errorMessage = nil
         finished = false
@@ -443,14 +447,16 @@ final class PlayerModel: ObservableObject {
         let start = startAt > 1 ? String(format: "%.1f", startAt) : "none"
         // Ссылки на встроенный TorrServer — мимо прокси для Lampa, сразу на сам сервер.
         // Балансер дал ссылки на качества — по умолчанию лучшее (его url не всегда максимальный).
-        let remote = Self.preferHTTPS(TorrServerManager.directURL(currentQuality?.url ?? item.url))
+        // Основная не открылась — запасная ссылка балансера (как делает встроенный плеер Lampa).
+        let source = useReserve ? (item.reserveURL ?? item.url) : (currentQuality?.url ?? item.url)
+        let remote = Self.preferHTTPS(TorrServerManager.directURL(source))
         // MODS и всё, что не открылось напрямую, — через мост URLSession (тот же выход в сеть, что у Lampa).
         let bridged = !Self.isLocal(remote) && (forceBridge || Self.needsBridge(remote))
         forceBridge = false
         loadedURL = remote
         loadedViaBridge = bridged
         let url = bridged ? NetBridge.wrap(remote) : remote
-        let headers = Self.browserHeaders(for: remote)
+        let headers = Self.requestHeaders(for: remote, item: item.headers)
         // Напрямую — через системный прокси VPN, если он есть (WebView ходит через него).
         let proxy = bridged || Self.isLocal(remote) ? nil : SystemProxy.proxy(for: remote)
         if bridged {
@@ -467,8 +473,12 @@ final class PlayerModel: ObservableObject {
         onQueue { [weak self] h in
             self?.pendingSubs = subs
             Self.qSet(h, "start", start)
+            // Заголовки этой серии — до loadfile: ими же пойдут плейлист HLS, сегменты и субтитры.
+            Self.qSet(h, "user-agent", headers.userAgent)
             Self.qSet(h, "referrer", headers.referrer)
-            Self.qSet(h, "http-header-fields", headers.fields)
+            Self.qSet(h, "http-header-fields", "")
+            // По одному через change-list: в значениях (Cookie и т.п.) бывают запятые, а список полей режется по ним.
+            for field in headers.fields { Self.qCommand(h, ["change-list", "http-header-fields", "append", field]) }
             Self.qSet(h, "http-proxy", proxy ?? "")
             Self.qCommand(h, ["loadfile", url, "replace"])
         }
@@ -479,6 +489,30 @@ final class PlayerModel: ObservableObject {
     private var loadedViaBridge = false
     private var forceBridge = false
     private var bridgeRetried = false
+    private var useReserve = false
+    private var reserveTried = false
+
+    static let defaultUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+    /// Заголовки запросов серии. Свои заголовки источника важнее наших; User-Agent — один:
+    /// свой у источника есть — наш не добавляем (два User-Agent часть CDN встречает 403-м).
+    /// Наши Referer/Origin — как у браузера с Lampa; в TorrServer (локальный) их не шлём: там на них бан.
+    private static func requestHeaders(for url: String, item: [String: String]?)
+        -> (userAgent: String, referrer: String, fields: [String]) {
+        let own = item ?? [:]
+        func value(_ name: String) -> String? {
+            own.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame })?.value
+        }
+        let userAgent = value("User-Agent") ?? AppSettings.webUserAgent ?? defaultUserAgent
+        let lampa = browserHeaders(for: url)
+        let referrer = value("Referer") ?? lampa.referrer
+        var fields = own
+            .filter { !["user-agent", "referer"].contains($0.key.lowercased()) }
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value)" }
+        if value("Origin") == nil, !lampa.fields.isEmpty { fields.append(lampa.fields) }
+        return (userAgent, referrer, fields)
+    }
 
     /// MODS (api.lampa.stream) привязывает ссылку к IP получателя, CDN VK за ним — тоже.
     /// FFmpeg с VPN выходит в сеть иначе, чем WebView, поэтому такие ссылки — сразу через мост.
@@ -518,6 +552,8 @@ final class PlayerModel: ObservableObject {
     func selectQuality(_ link: QualityLink) {
         guard alive, link != currentQuality else { return }
         qualityChoice = link.label
+        useReserve = false
+        reserveTried = false
         showToast("Качество: \(link.title)")
         play(index: index, at: position > 1 ? position : nil)
     }
@@ -978,6 +1014,14 @@ final class PlayerModel: ObservableObject {
                 finished = true
             }
         case 4: // ERROR
+            // Сначала запасная ссылка балансера: у MODS это другой узел CDN (встроенный плеер Lampa делает так же).
+            if !reserveTried, let reserve = current.reserveURL, !reserve.isEmpty {
+                reserveTried = true
+                useReserve = true
+                appendLog("Основная ссылка не открылась — пробую запасную")
+                play(index: index, at: position > 1 ? position : nil)
+                return
+            }
             // Напрямую не открылось (403 от CDN и т.п.) — один раз пробуем через мост URLSession.
             if !bridgeRetried, !loadedViaBridge, !Self.isLocal(loadedURL) {
                 bridgeRetried = true
@@ -1009,7 +1053,10 @@ final class PlayerModel: ObservableObject {
         let item = current
         let played = loadedURL.isEmpty ? item.url : loadedURL
         let proxySummary = SystemProxy.summary
-        let route = loadedViaBridge ? "через сетевой стек iOS, как у Lampa" : "напрямую (FFmpeg)"
+        let route = (loadedViaBridge ? "через сетевой стек iOS, как у Lampa" : "напрямую (FFmpeg)")
+            + (useReserve ? ", запасная ссылка" : "")
+        // Имена заголовков источника (значения — куки и токены — не показываем).
+        let ownHeaders = item.headers.map { $0.keys.sorted().joined(separator: ", ") }
         let quality = currentQuality.map { link in
             "\(link.title) из \((item.qualities ?? []).map(\.title).joined(separator: ", "))"
         }
@@ -1039,6 +1086,8 @@ final class PlayerModel: ObservableObject {
                     row("Субтитры от Lampa", item.sub),
                     row("Перевод из Lampa", item.voice),
                     row("Качество", quality),
+                    row("Заголовки источника", ownHeaders),
+                    row("Запасная ссылка", item.reserveURL == nil ? nil : (useReserve ? "используется" : "есть")),
                     row("Сеть", route),
                     row("Системный прокси", proxySummary),
                     row("Контейнер", v("file-format")),

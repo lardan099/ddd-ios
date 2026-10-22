@@ -16,7 +16,7 @@
     if (window.__lampa_player_ios) return;
     window.__lampa_player_ios = true;
 
-    var VERSION = '1.3.1';
+    var VERSION = '1.4.0';
     var API = 'http://127.0.0.1:8090/lampaplayer';
     var MAX_URL = 60000;
 
@@ -77,6 +77,29 @@
         return out.sort(function (a, b) { return height(b[0]) - height(a[0]); });
     }
 
+    // Заголовки в любом виде, как их кладут плагины: { name: value }, [[name, value]], ['Name: value'], ['name', 'value', …].
+    function headers(raw) {
+        if (!raw) return null;
+        var out = {};
+        var put = function (name, value) {
+            name = String(name || '').trim();
+            if (!name || value === undefined || value === null || /^(host|content-length|connection)$/i.test(name)) return;
+            out[name] = String(value);
+        };
+        if (Array.isArray(raw)) {
+            if (raw.every(function (x) { return typeof x === 'string'; }) && raw.some(function (x) { return x.indexOf(':') > 0; })) {
+                raw.forEach(function (line) { var i = line.indexOf(':'); if (i > 0) put(line.slice(0, i), line.slice(i + 1).trim()); });
+            } else if (raw.every(function (x) { return Array.isArray(x); })) {
+                raw.forEach(function (pair) { put(pair[0], pair[1]); });
+            } else {
+                for (var i = 0; i + 1 < raw.length; i += 2) put(raw[i], raw[i + 1]);
+            }
+        } else if (typeof raw === 'object') {
+            for (var key in raw) put(key, raw[key]);
+        }
+        return Object.keys(out).length ? out : null;
+    }
+
     function itemFrom(src) {
         var timeline = src.timeline || {};
         var item = { u: playUrl(src.url), t: clean(src.title || src.path || '') };
@@ -93,6 +116,13 @@
         if (voice) item.a = clean(voice);
         var q = qualities(src.quality);
         if (q.length > 1) item.q = q;
+        // Свои заголовки источника (User-Agent, Referer, Cookie…): без них часть CDN отвечает 403.
+        var hd = headers(src.headers);
+        if (hd) item.hd = hd;
+        // Запасная ссылка (MODS: url_reserve) — встроенный плеер Lampa переключается на неё при ошибке.
+        if (typeof src.url_reserve === 'string' && src.url_reserve && !sameUrl(src.url_reserve, src.url)) {
+            item.r = playUrl(src.url_reserve);
+        }
         if (timeline.hash) {
             item.h = String(timeline.hash);
             if (timeline.time > 0) item.p = Math.floor(timeline.time);
@@ -154,6 +184,10 @@
         items[index].u = fresh.u;
         if (fresh.q) items[index].q = fresh.q;
         else if (data.quality) delete items[index].q;
+        if (fresh.r) items[index].r = fresh.r;
+        else delete items[index].r;
+        // Заголовки, заданные на весь плейлист (как у Lampa на Android: data.headers), — сериям без своих.
+        if (fresh.hd) items.forEach(function (it) { if (!it.hd) it.hd = fresh.hd; });
 
         var payload = { v: 1, i: index, c: card(data), items: items };
         var url = 'lampaplayer://lampa?d=' + encode(payload);
@@ -161,7 +195,7 @@
         // Слишком длинно — сначала качества у остальных серий (у открытой — оставляем),
         // потом окно серий вокруг текущей, потом превью.
         if (url.length > MAX_URL) {
-            items.forEach(function (it, n) { if (n !== index) delete it.q; });
+            items.forEach(function (it, n) { if (n !== index) { delete it.q; delete it.r; } });
             url = 'lampaplayer://lampa?d=' + encode(payload);
         }
         var spans = [20, 10, 5, 2, 0];

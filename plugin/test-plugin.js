@@ -81,6 +81,25 @@ assert(payload.items[0].u.endsWith('&play'), 'preload → play');
 assert.strictEqual(payload.items[1].h, 'h2');
 console.log('torrent ok');
 
+// Заголовки источника и запасная ссылка: на весь плейлист и у отдельной серии, в разных форматах.
+const withHeaders = [1, 2].map((n) => ({
+    title: 'H' + n, url: 'https://cdn/h' + n + '.m3u8', timeline: { hash: 8000 + n },
+    headers: n === 2 ? ['Referer: https://site2/', 'X-Token: t2'] : undefined,
+}));
+handlers.infuse_build_url({
+    data: Object.assign({}, withHeaders[0], {
+        playlist: withHeaders, url_reserve: 'https://cdn/h1_reserve.m3u8',
+        headers: { 'User-Agent': 'Mozilla/5.0 Custom', Referer: 'https://site/', Host: 'drop.me' },
+    }),
+    setUrl: (u) => { result = u; },
+});
+payload = decode(result);
+assert.deepStrictEqual(payload.items[0].hd, { 'User-Agent': 'Mozilla/5.0 Custom', Referer: 'https://site/' }, 'own headers, Host dropped');
+assert.deepStrictEqual(payload.items[1].hd, { Referer: 'https://site2/', 'X-Token': 't2' }, 'per-item header lines');
+assert.strictEqual(payload.items[0].r, 'https://cdn/h1_reserve.m3u8', 'reserve url');
+assert.strictEqual(payload.items[1].r, undefined);
+console.log('headers ok');
+
 // Огромный плейлист урезается окном вокруг текущей серии.
 const big = Array.from({ length: 200 }, (_, n) => ({ title: 'E' + n, url: 'https://x/' + 'a'.repeat(900) + n, timeline: { hash: n } }));
 handlers.infuse_build_url({ data: Object.assign({}, big[150], { playlist: big }), setUrl: (u) => { result = u; } });

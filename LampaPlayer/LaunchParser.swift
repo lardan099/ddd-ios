@@ -101,6 +101,8 @@ enum LaunchParser {
                 }
                 if links.count > 1 { item.qualities = links }
             }
+            if let headers = raw["hd"] as? [String: String], !headers.isEmpty { item.headers = headers }
+            if let reserve = raw["r"] as? String, !reserve.isEmpty { item.reserveURL = reserve }
             if let hash = raw["h"] as? String, !hash.isEmpty { item.lampaHash = hash }
             else if let hash = number(raw["h"]) { item.lampaHash = String(Int64(hash)) }
             if let position = number(raw["p"]), position > 0 { item.position = position }
